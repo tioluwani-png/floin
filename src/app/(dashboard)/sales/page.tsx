@@ -1,0 +1,282 @@
+'use client'
+
+import { useState, useMemo } from 'react'
+import { useStore } from '@/store'
+import { SALES_CHANNELS, CURRENCY } from '@/lib/constants'
+import { formatCurrency, formatDate, generateId, getTodayDate, getCurrentMonthYear } from '@/lib/utils'
+import type { SalesEntry } from '@/lib/supabase/types'
+
+export default function SalesPage() {
+  const { sales, business, addSale, deleteSale, updateSale } = useStore()
+  const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+
+  const [date, setDate] = useState(getTodayDate())
+  const [channel, setChannel] = useState(business?.channels?.[0] || 'instagram')
+  const [units, setUnits] = useState('')
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+
+  const currentMonth = getCurrentMonthYear()
+  const monthSales = useMemo(
+    () => sales.filter((s) => s.date.startsWith(currentMonth)),
+    [sales, currentMonth]
+  )
+
+  const totals = useMemo(() => {
+    const totalRevenue = monthSales.reduce((sum, s) => sum + s.amount, 0)
+    const totalUnits = monthSales.reduce((sum, s) => sum + s.units, 0)
+    const avgOrder = monthSales.length > 0 ? totalRevenue / monthSales.length : 0
+    return { totalRevenue, totalUnits, avgOrder, count: monthSales.length }
+  }, [monthSales])
+
+  function resetForm() {
+    setDate(getTodayDate())
+    setChannel(business?.channels?.[0] || 'instagram')
+    setUnits('')
+    setAmount('')
+    setNote('')
+    setEditingId(null)
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!units || !amount) return
+
+    if (editingId) {
+      updateSale(editingId, {
+        date, channel,
+        units: parseInt(units),
+        amount: parseFloat(amount),
+        note: note || null,
+      })
+    } else {
+      const sale: SalesEntry = {
+        id: generateId(),
+        business_id: business?.id || 'guest',
+        date, channel,
+        units: parseInt(units),
+        amount: parseFloat(amount),
+        note: note || null,
+        created_at: new Date().toISOString(),
+      }
+      addSale(sale)
+    }
+    resetForm()
+    setShowForm(false)
+  }
+
+  function handleEdit(sale: SalesEntry) {
+    setEditingId(sale.id)
+    setDate(sale.date)
+    setChannel(sale.channel)
+    setUnits(sale.units.toString())
+    setAmount(sale.amount.toString())
+    setNote(sale.note || '')
+    setShowForm(true)
+  }
+
+  const channels = business?.channels?.length
+    ? SALES_CHANNELS.filter((c) => business.channels.includes(c.id))
+    : SALES_CHANNELS
+
+  return (
+    <div className="animate-fade-up">
+      {/* Header */}
+      <div>
+        <p className="text-xs font-medium text-muted uppercase tracking-wider">
+          {new Date().toLocaleDateString('en-NG', { month: 'long', year: 'numeric' })}
+        </p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight">Sales</h1>
+      </div>
+
+      {/* Stats cards */}
+      <div className="mt-5 grid grid-cols-3 gap-2 stagger-children">
+        <div className="rounded-2xl bg-gradient-to-br from-floin-green to-floin-green-dark p-3.5 shadow-sm shadow-floin-green/10">
+          <p className="text-[10px] font-medium text-white/70">Revenue</p>
+          <p className="mt-1 text-sm font-bold text-white">
+            {formatCurrency(totals.totalRevenue)}
+          </p>
+        </div>
+        <div className="rounded-2xl bg-white p-3.5 shadow-sm border border-border/40">
+          <p className="text-[10px] font-medium text-muted">Units</p>
+          <p className="mt-1 text-sm font-bold text-foreground">{totals.totalUnits}</p>
+        </div>
+        <div className="rounded-2xl bg-white p-3.5 shadow-sm border border-border/40">
+          <p className="text-[10px] font-medium text-muted">Avg order</p>
+          <p className="mt-1 text-sm font-bold text-foreground">
+            {formatCurrency(Math.round(totals.avgOrder))}
+          </p>
+        </div>
+      </div>
+
+      {/* Log sale button */}
+      {!showForm && (
+        <button
+          onClick={() => { resetForm(); setShowForm(true) }}
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-floin-green to-floin-green-dark py-4 text-sm font-semibold text-white shadow-md shadow-floin-green/20 transition-all hover:shadow-lg active:scale-[0.98]"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+            <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
+          </svg>
+          Log sale
+        </button>
+      )}
+
+      {/* Sale form */}
+      {showForm && (
+        <div className="mt-6 animate-scale-in rounded-2xl bg-white p-5 shadow-lg shadow-black/5 border border-border/40">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold">{editingId ? 'Edit sale' : 'New sale'}</h3>
+            <button
+              onClick={() => { setShowForm(false); resetForm() }}
+              className="rounded-lg p-1.5 text-muted hover:bg-background hover:text-foreground transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+              </svg>
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            {/* Date */}
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full rounded-xl bg-background px-4 py-3 text-sm outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+            />
+
+            {/* Channel selection */}
+            <div>
+              <label className="text-xs font-medium text-muted-dark">Channel</label>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {channels.map((ch) => (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() => setChannel(ch.id)}
+                    className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium transition-all duration-200 ${
+                      channel === ch.id
+                        ? 'bg-gradient-to-r from-floin-green to-floin-green-dark text-white shadow-sm'
+                        : 'bg-background text-muted-dark ring-1 ring-border hover:ring-floin-green/40'
+                    }`}
+                  >
+                    <span className="text-sm">{ch.icon}</span>
+                    {ch.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Units + Amount */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-dark">Units sold</label>
+                <input
+                  type="number"
+                  value={units}
+                  onChange={(e) => setUnits(e.target.value)}
+                  placeholder="1"
+                  min="1"
+                  className="mt-1.5 w-full rounded-xl bg-background px-4 py-3 text-sm font-medium outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-dark">Amount ({CURRENCY.symbol})</label>
+                <input
+                  type="number"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0"
+                  min="0"
+                  step="0.01"
+                  className="mt-1.5 w-full rounded-xl bg-background px-4 py-3 text-sm font-medium outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+                />
+              </div>
+            </div>
+
+            {/* Note */}
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Note (optional) — e.g. customer name"
+              className="w-full rounded-xl bg-background px-4 py-3 text-sm outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+            />
+
+            {/* Submit */}
+            <button
+              type="submit"
+              disabled={!units || !amount}
+              className="w-full rounded-2xl bg-gradient-to-r from-floin-green to-floin-green-dark py-3.5 text-sm font-semibold text-white shadow-md shadow-floin-green/20 transition-all hover:shadow-lg active:scale-[0.98] disabled:opacity-40 disabled:shadow-none"
+            >
+              {editingId ? 'Update sale' : 'Add sale'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Sales list */}
+      <div className="mt-6">
+        {monthSales.length === 0 && !showForm && (
+          <div className="py-16 text-center animate-fade-in">
+            <div className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-floin-green-light">
+              <span className="text-2xl">💰</span>
+            </div>
+            <p className="mt-4 text-sm font-semibold">No sales logged yet</p>
+            <p className="mt-1 text-xs text-muted">
+              Tap &quot;Log sale&quot; to record your first sale
+            </p>
+          </div>
+        )}
+
+        {monthSales.length > 0 && (
+          <div className="space-y-2 stagger-children">
+            <p className="text-xs font-medium text-muted uppercase tracking-wider mb-3">
+              {totals.count} sale{totals.count > 1 ? 's' : ''} this month
+            </p>
+            {monthSales.map((sale) => (
+              <div
+                key={sale.id}
+                className="group flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm border border-border/40 transition-all duration-200 hover:shadow-md"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-background text-lg">
+                    {SALES_CHANNELS.find((c) => c.id === sale.channel)?.icon || '📦'}
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold">{formatCurrency(sale.amount)}</p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      {sale.units} unit{sale.units > 1 ? 's' : ''} · {formatDate(sale.date)}
+                      {sale.note && <span className="text-muted-dark"> · {sale.note}</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => handleEdit(sale)}
+                    className="rounded-lg p-2 text-muted hover:bg-background hover:text-foreground transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
+                      <path d="m13.488 2.513-1.001-1.001a1.462 1.462 0 0 0-2.07 0L2.71 9.22a.75.75 0 0 0-.198.37l-.582 2.907a.75.75 0 0 0 .882.882l2.907-.582a.75.75 0 0 0 .37-.198l7.706-7.707a1.462 1.462 0 0 0 0-2.07Z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => deleteSale(sale.id)}
+                    className="rounded-lg p-2 text-muted hover:bg-floin-red-light hover:text-floin-red transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
+                      <path fillRule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5A.75.75 0 0 1 9.95 6Z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
