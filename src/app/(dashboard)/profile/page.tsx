@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/store'
+import { signOut } from '@/lib/supabase/auth'
 import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCY } from '@/lib/constants'
 import { generateId } from '@/lib/utils'
 import type { Product } from '@/lib/supabase/types'
@@ -45,7 +46,8 @@ export default function ProfilePage() {
     setShowProductForm(false)
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    try { await signOut() } catch {}
     setUser(null)
     setGuest(true)
     setOnboardingComplete(false)

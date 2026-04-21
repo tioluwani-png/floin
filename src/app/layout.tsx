@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ServiceWorkerRegister } from "@/components/layout/ServiceWorker";
 import { StoreHydration } from "@/components/layout/StoreHydration";
+import { AuthProvider } from "@/components/layout/AuthProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -45,7 +46,9 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <StoreHydration>
-          {children}
+          <AuthProvider>
+            {children}
+          </AuthProvider>
         </StoreHydration>
         <ServiceWorkerRegister />
       </body>

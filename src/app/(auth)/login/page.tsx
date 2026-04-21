@@ -6,7 +6,7 @@ import { useStore } from '@/store'
 
 export default function LoginPage() {
   const router = useRouter()
-  const { setGuest, setOnboardingComplete } = useStore()
+  const { setGuest, setOnboardingComplete, onboardingComplete } = useStore()
 
   async function handleGoogleSignIn() {
     try {
@@ -20,6 +20,10 @@ export default function LoginPage() {
     setGuest(true)
     setOnboardingComplete(false)
     router.push('/onboarding')
+  }
+
+  function handleSkip() {
+    router.back()
   }
 
   return (
@@ -80,7 +84,16 @@ export default function LoginPage() {
           </button>
         </div>
 
-        <p className="mt-6 text-center text-xs text-muted">
+        {onboardingComplete && (
+          <button
+            onClick={handleSkip}
+            className="mt-4 w-full py-2 text-sm font-medium text-muted transition-colors hover:text-foreground"
+          >
+            Go back
+          </button>
+        )}
+
+        <p className="mt-4 text-center text-xs text-muted">
           No credit card. No spreadsheets. Just clarity.
         </p>
       </div>
