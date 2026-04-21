@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/store'
-import { SALES_CHANNELS, BUSINESS_TYPES } from '@/lib/constants'
+import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCIES } from '@/lib/constants'
 import { generateId } from '@/lib/utils'
 import type { Business } from '@/lib/supabase/types'
 
@@ -17,6 +17,7 @@ export default function OnboardingPage() {
   const [businessName, setBusinessName] = useState('')
   const [businessType, setBusinessType] = useState<'product' | 'service' | 'hybrid'>('product')
   const [selectedChannels, setSelectedChannels] = useState<string[]>(['instagram', 'whatsapp'])
+  const [selectedCurrency, setSelectedCurrency] = useState('NGN')
 
   function toggleChannel(channelId: string) {
     setSelectedChannels((prev) =>
@@ -32,8 +33,9 @@ export default function OnboardingPage() {
       user_id: isGuest ? 'guest' : user?.id || 'guest',
       name: businessName || 'My Business',
       type: businessType,
-      currency: 'NGN',
+      currency: selectedCurrency,
       channels: selectedChannels,
+      logo_base64: null,
       created_at: new Date().toISOString(),
     }
     setBusiness(business)
@@ -148,6 +150,26 @@ export default function OnboardingPage() {
               </div>
             </div>
 
+            <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm border border-border/40">
+              <label className="text-xs font-medium text-muted-dark">Currency</label>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {CURRENCIES.map((cur) => (
+                  <button
+                    key={cur.code}
+                    onClick={() => setSelectedCurrency(cur.code)}
+                    className={`flex items-center gap-2.5 rounded-xl px-3 py-3 text-xs font-medium transition-all duration-200 ${
+                      selectedCurrency === cur.code
+                        ? 'bg-gradient-to-br from-floin-green to-floin-green-dark text-white shadow-sm'
+                        : 'bg-background text-muted-dark ring-1 ring-border hover:ring-floin-green/30'
+                    }`}
+                  >
+                    <span className="text-sm font-bold">{cur.symbol}</span>
+                    {cur.code}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <button
               onClick={() => setStep(3)}
               className="mt-8 w-full rounded-2xl bg-gradient-to-r from-floin-green to-floin-green-dark px-6 py-4 text-sm font-semibold text-white shadow-md shadow-floin-green/20 transition-all hover:shadow-lg active:scale-[0.98]"
@@ -224,7 +246,7 @@ export default function OnboardingPage() {
                 <div className="h-px bg-border/50" />
                 <div className="flex items-center justify-between">
                   <span className="text-muted">Currency</span>
-                  <span className="font-medium">NGN (₦)</span>
+                  <span className="font-medium">{selectedCurrency} ({CURRENCIES.find(c => c.code === selectedCurrency)?.symbol})</span>
                 </div>
               </div>
             </div>

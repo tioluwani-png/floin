@@ -2,14 +2,16 @@
 
 import { useMemo } from 'react'
 import { useStore } from '@/store'
-import { SALES_CHANNELS, EXPENSE_CATEGORIES, CURRENCY } from '@/lib/constants'
-import { formatCurrency, getCurrentMonthYear, getMonthLabel } from '@/lib/utils'
+import { SALES_CHANNELS, EXPENSE_CATEGORIES } from '@/lib/constants'
+import { getCurrentMonthYear, getMonthLabel } from '@/lib/utils'
+import { useCurrency } from '@/hooks/useCurrency'
 import { ChannelChart } from '@/components/report/ChannelChart'
 import { ExportButton } from '@/components/report/ExportButton'
 import { ShareButton } from '@/components/report/ShareButton'
 
 export default function ReportPage() {
   const { sales, expenseMonths, expenseOthers, business } = useStore()
+  const { symbol, format, code: currencyCode } = useCurrency()
   const currentMonth = getCurrentMonthYear()
 
   const businessSales = useMemo(
@@ -92,6 +94,9 @@ export default function ReportPage() {
             directUnits={directUnits}
             distributorUnits={distributorUnits}
             avgOrder={monthSales.length > 0 ? totalRevenue / monthSales.length : 0}
+            currencyCode={currencyCode}
+            logoBase64={business?.logo_base64 || null}
+            businessType={business?.type || 'product'}
           />
         )}
       </div>
@@ -110,7 +115,7 @@ export default function ReportPage() {
           <div className={`mt-6 rounded-3xl p-6 ${netProfit >= 0 ? 'bg-gradient-to-br from-floin-green to-emerald-600' : 'bg-gradient-to-br from-floin-red to-rose-600'} shadow-lg ${netProfit >= 0 ? 'shadow-floin-green/20' : 'shadow-floin-red/20'}`}>
             <p className="text-xs font-medium text-white/70">Net Profit</p>
             <p className="mt-1 text-3xl font-bold text-white" data-metric="Net Profit">
-              {formatCurrency(netProfit)}
+              {format(netProfit)}
             </p>
             <div className="mt-3 flex gap-4">
               <span className="rounded-full bg-white/20 px-2.5 py-1 text-xs font-medium text-white">
@@ -126,11 +131,11 @@ export default function ReportPage() {
           <div className="mt-4 grid grid-cols-2 gap-3 stagger-children">
             <div className="rounded-2xl bg-white p-4 shadow-sm border border-border/40" data-metric="Revenue">
               <p className="text-xs font-medium text-muted">Revenue</p>
-              <p className="mt-1 text-lg font-bold text-floin-green">{formatCurrency(totalRevenue)}</p>
+              <p className="mt-1 text-lg font-bold text-floin-green">{format(totalRevenue)}</p>
             </div>
             <div className="rounded-2xl bg-white p-4 shadow-sm border border-border/40" data-metric="Expenses">
               <p className="text-xs font-medium text-muted">Expenses</p>
-              <p className="mt-1 text-lg font-bold text-floin-red">{formatCurrency(totalExpenses)}</p>
+              <p className="mt-1 text-lg font-bold text-floin-red">{format(totalExpenses)}</p>
             </div>
           </div>
 
@@ -176,7 +181,7 @@ export default function ReportPage() {
                             <span className="text-xs font-medium">
                               {SALES_CHANNELS.find((c) => c.id === channelId)?.label}
                             </span>
-                            <span className="text-xs font-bold">{formatCurrency(amount)}</span>
+                            <span className="text-xs font-bold">{format(amount)}</span>
                           </div>
                           <div className="mt-1 h-1.5 rounded-full bg-background overflow-hidden">
                             <div
@@ -203,20 +208,20 @@ export default function ReportPage() {
                   return (
                     <div key={cat.id} className="flex items-center justify-between">
                       <span className="text-sm text-muted-dark">{cat.label}</span>
-                      <span className="text-sm font-semibold">{formatCurrency(val)}</span>
+                      <span className="text-sm font-semibold">{format(val)}</span>
                     </div>
                   )
                 })}
                 {monthOthers.map((other) => (
                   <div key={other.id} className="flex items-center justify-between">
                     <span className="text-sm text-muted-dark">{other.label}</span>
-                    <span className="text-sm font-semibold">{formatCurrency(other.amount)}</span>
+                    <span className="text-sm font-semibold">{format(other.amount)}</span>
                   </div>
                 ))}
                 <div className="border-t border-border/50 pt-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-bold">Total</span>
-                    <span className="text-sm font-bold text-floin-red">{formatCurrency(totalExpenses)}</span>
+                    <span className="text-sm font-bold text-floin-red">{format(totalExpenses)}</span>
                   </div>
                 </div>
               </div>
@@ -231,7 +236,7 @@ export default function ReportPage() {
             profit={netProfit}
             margin={margin}
             units={totalUnits}
-            currencySymbol={CURRENCY.symbol}
+            currencySymbol={symbol}
           />
         </div>
       )}

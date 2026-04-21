@@ -2,7 +2,8 @@
 
 import { useMemo } from 'react'
 import { useStore } from '@/store'
-import { formatCurrency, getMonthLabel } from '@/lib/utils'
+import { getMonthLabel } from '@/lib/utils'
+import { useCurrency } from '@/hooks/useCurrency'
 import { TrendChart } from '@/components/report/TrendChart'
 
 interface MonthSummary {
@@ -16,6 +17,7 @@ interface MonthSummary {
 
 export default function HistoryPage() {
   const { sales, expenseMonths, expenseOthers, business } = useStore()
+  const { format } = useCurrency()
 
   const businessSales = useMemo(
     () => sales.filter((s) => s.business_id === (business?.id || 'guest')),
@@ -129,12 +131,12 @@ export default function HistoryPage() {
                     : 'bg-floin-red-light text-floin-red'
                 }`}
               >
-                {m.profit >= 0 ? '+' : ''}{formatCurrency(m.profit)}
+                {m.profit >= 0 ? '+' : ''}{format(m.profit)}
               </span>
             </div>
             <div className="mt-2.5 flex gap-4 text-xs text-muted">
-              <span>Revenue: <span className="font-medium text-foreground">{formatCurrency(m.revenue)}</span></span>
-              <span>Expenses: <span className="font-medium text-foreground">{formatCurrency(m.expenses)}</span></span>
+              <span>Revenue: <span className="font-medium text-foreground">{format(m.revenue)}</span></span>
+              <span>Expenses: <span className="font-medium text-foreground">{format(m.expenses)}</span></span>
             </div>
             {/* Mini progress bar */}
             <div className="mt-2.5 h-1.5 rounded-full bg-background overflow-hidden">

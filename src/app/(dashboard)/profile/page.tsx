@@ -4,8 +4,9 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/store'
 import { signOut } from '@/lib/supabase/auth'
-import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCY } from '@/lib/constants'
+import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCIES, getCurrency } from '@/lib/constants'
 import { generateId } from '@/lib/utils'
+import { compressImage } from '@/lib/imageUtils'
 import type { Business, Product } from '@/lib/supabase/types'
 
 export default function ProfilePage() {
@@ -29,8 +30,10 @@ export default function ProfilePage() {
   const [newBizType, setNewBizType] = useState<'product' | 'service' | 'hybrid'>('product')
   const [newBizChannels, setNewBizChannels] = useState<string[]>(['instagram', 'whatsapp'])
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const [newBizCurrency, setNewBizCurrency] = useState('NGN')
 
   const businessProducts = products.filter(p => p.business_id === business?.id)
+  const activeCurrency = getCurrency(business?.currency)
 
   function toggleChannel(id: string) {
     const updated = channels.includes(id) ? channels.filter((c) => c !== id) : [...channels, id]
@@ -70,8 +73,9 @@ export default function ProfilePage() {
       user_id: isGuest ? 'guest' : user?.id || 'guest',
       name: newBizName.trim(),
       type: newBizType,
-      currency: 'NGN',
+      currency: newBizCurrency,
       channels: newBizChannels,
+      logo_base64: null,
       created_at: new Date().toISOString(),
     }
     addBusiness(biz)
@@ -81,6 +85,7 @@ export default function ProfilePage() {
     setNewBizName('')
     setNewBizType('product')
     setNewBizChannels(['instagram', 'whatsapp'])
+    setNewBizCurrency('NGN')
     setShowNewBusiness(false)
   }
 
@@ -99,6 +104,18 @@ export default function ProfilePage() {
     setNewBizChannels(prev =>
       prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
     )
+  }
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !business) return
+    try {
+      const base64 = await compressImage(file, 200, 0.8)
+      setBusiness({ ...business, logo_base64: base64 })
+    } catch {
+      // silently fail
+    }
+    e.target.value = ''
   }
 
   async function handleLogout() {
@@ -256,6 +273,25 @@ export default function ProfilePage() {
               </div>
             </div>
             <div>
+              <label className="text-xs font-medium text-muted-dark">Currency</label>
+              <div className="mt-1.5 grid grid-cols-4 gap-1">
+                {CURRENCIES.map((cur) => (
+                  <button
+                    key={cur.code}
+                    type="button"
+                    onClick={() => setNewBizCurrency(cur.code)}
+                    className={`rounded-lg px-2 py-1.5 text-[10px] font-medium transition-all ${
+                      newBizCurrency === cur.code
+                        ? 'bg-floin-green text-white'
+                        : 'bg-white text-muted-dark ring-1 ring-border'
+                    }`}
+                  >
+                    {cur.symbol} {cur.code}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
               <label className="text-xs font-medium text-muted-dark">Channels</label>
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {SALES_CHANNELS.map((ch) => (
@@ -290,6 +326,37 @@ export default function ProfilePage() {
       {business && (
         <div className="mt-4 rounded-2xl bg-white p-5 shadow-sm border border-border/40">
           <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Business details</h3>
+
+          {/* Logo upload */}
+          <div className="mt-4 flex items-center gap-4">
+            <div className="relative">
+              {business.logo_base64 ? (
+                <img src={business.logo_base64} alt="Logo" className="h-16 w-16 rounded-2xl object-cover ring-2 ring-border/40" />
+              ) : (
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-floin-green to-floin-green-dark text-xl font-bold text-white">
+                  {business.name[0]?.toUpperCase() || 'B'}
+                </div>
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-xs font-medium text-muted-dark">Business logo</p>
+              <p className="text-[10px] text-muted">Appears in your PDF reports</p>
+              <div className="mt-2 flex gap-2">
+                <label className="cursor-pointer rounded-lg bg-floin-green-light px-3 py-1.5 text-xs font-semibold text-floin-green-dark transition-colors hover:bg-floin-green/20">
+                  {business.logo_base64 ? 'Change' : 'Upload'}
+                  <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                </label>
+                {business.logo_base64 && (
+                  <button
+                    onClick={() => setBusiness({ ...business, logo_base64: null })}
+                    className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted hover:text-floin-red hover:bg-floin-red-light transition-all"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
 
           <div className="mt-4">
             <label className="text-xs font-medium text-muted-dark">Name</label>
@@ -342,9 +409,26 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          <div className="mt-4 flex items-center justify-between rounded-xl bg-background p-3">
-            <span className="text-xs text-muted-dark">Currency</span>
-            <span className="text-xs font-semibold">{CURRENCY.name} ({CURRENCY.symbol})</span>
+          <div className="mt-4">
+            <label className="text-xs font-medium text-muted-dark">Currency</label>
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              {CURRENCIES.map((cur) => (
+                <button
+                  key={cur.code}
+                  onClick={() => {
+                    if (business) setBusiness({ ...business, currency: cur.code })
+                  }}
+                  className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-medium transition-all duration-200 ${
+                    business?.currency === cur.code
+                      ? 'bg-gradient-to-r from-floin-green to-floin-green-dark text-white shadow-sm'
+                      : 'bg-background text-muted-dark ring-1 ring-border'
+                  }`}
+                >
+                  <span className="font-bold">{cur.symbol}</span>
+                  {cur.code}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -373,7 +457,7 @@ export default function ProfilePage() {
               autoFocus
             />
             <div className="relative w-24">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted">{CURRENCY.symbol}</span>
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted">{activeCurrency.symbol}</span>
               <input
                 type="number"
                 value={productPrice}
@@ -393,7 +477,7 @@ export default function ProfilePage() {
               <div key={p.id} className="flex items-center justify-between rounded-xl bg-background p-3">
                 <div>
                   <p className="text-sm font-medium">{p.name}</p>
-                  <p className="text-xs text-muted">{CURRENCY.symbol}{p.price.toLocaleString()}</p>
+                  <p className="text-xs text-muted">{activeCurrency.symbol}{p.price.toLocaleString()}</p>
                 </div>
                 <button onClick={() => deleteProduct(p.id)} className="text-xs font-medium text-muted hover:text-floin-red transition-all">Remove</button>
               </div>

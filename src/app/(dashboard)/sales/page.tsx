@@ -2,12 +2,14 @@
 
 import { useState, useMemo } from 'react'
 import { useStore } from '@/store'
-import { SALES_CHANNELS, CURRENCY } from '@/lib/constants'
-import { formatCurrency, formatDate, generateId, getTodayDate, getCurrentMonthYear } from '@/lib/utils'
+import { SALES_CHANNELS } from '@/lib/constants'
+import { useCurrency } from '@/hooks/useCurrency'
+import { formatDate, generateId, getTodayDate, getCurrentMonthYear } from '@/lib/utils'
 import type { SalesEntry } from '@/lib/supabase/types'
 
 export default function SalesPage() {
   const { sales, business, products, addSale, deleteSale, updateSale } = useStore()
+  const { symbol, format } = useCurrency()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -130,7 +132,7 @@ export default function SalesPage() {
         <div className="rounded-2xl bg-gradient-to-br from-floin-green to-floin-green-dark p-3.5 shadow-sm shadow-floin-green/10">
           <p className="text-[10px] font-medium text-white/70">Revenue</p>
           <p className="mt-1 text-sm font-bold text-white">
-            {formatCurrency(totals.totalRevenue)}
+            {format(totals.totalRevenue)}
           </p>
         </div>
         <div className="rounded-2xl bg-white p-3.5 shadow-sm border border-border/40">
@@ -140,7 +142,7 @@ export default function SalesPage() {
         <div className="rounded-2xl bg-white p-3.5 shadow-sm border border-border/40">
           <p className="text-[10px] font-medium text-muted">Delivery</p>
           <p className="mt-1 text-sm font-bold text-foreground">
-            {formatCurrency(totals.totalDelivery)}
+            {format(totals.totalDelivery)}
           </p>
         </div>
       </div>
@@ -220,7 +222,7 @@ export default function SalesPage() {
                           : 'bg-background text-muted-dark ring-1 ring-border hover:ring-floin-purple/40'
                       }`}
                     >
-                      {p.name} · {CURRENCY.symbol}{p.price.toLocaleString()}
+                      {p.name} · {symbol}{p.price.toLocaleString()}
                     </button>
                   ))}
                 </div>
@@ -242,7 +244,7 @@ export default function SalesPage() {
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-dark">Amount ({CURRENCY.symbol})</label>
+                <label className="text-xs font-medium text-muted-dark">Amount ({symbol})</label>
                 <input
                   type="number"
                   value={amount}
@@ -257,7 +259,7 @@ export default function SalesPage() {
 
             {/* Delivery fee */}
             <div>
-              <label className="text-xs font-medium text-muted-dark">Delivery fee ({CURRENCY.symbol}) — optional</label>
+              <label className="text-xs font-medium text-muted-dark">Delivery fee ({symbol}) — optional</label>
               <input
                 type="number"
                 value={deliveryFee}
@@ -354,10 +356,10 @@ export default function SalesPage() {
                   </span>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold">{formatCurrency(sale.amount)}</p>
+                      <p className="text-sm font-semibold">{format(sale.amount)}</p>
                       {(sale.delivery_fee || 0) > 0 && (
                         <span className="rounded-md bg-floin-purple-light px-1.5 py-0.5 text-[10px] font-semibold text-floin-purple">
-                          +{formatCurrency(sale.delivery_fee)} delivery
+                          +{format(sale.delivery_fee)} delivery
                         </span>
                       )}
                     </div>

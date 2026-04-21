@@ -2,8 +2,9 @@
 
 import { useState, useMemo } from 'react'
 import { useStore } from '@/store'
-import { EXPENSE_CATEGORIES, CURRENCY } from '@/lib/constants'
-import { formatCurrency, getCurrentMonthYear, getMonthLabel, generateId } from '@/lib/utils'
+import { EXPENSE_CATEGORIES } from '@/lib/constants'
+import { getCurrentMonthYear, getMonthLabel, generateId } from '@/lib/utils'
+import { useCurrency } from '@/hooks/useCurrency'
 import type { ExpenseMonth, ExpenseOther } from '@/lib/supabase/types'
 
 export default function ExpensesPage() {
@@ -16,6 +17,7 @@ export default function ExpensesPage() {
     addExpenseOther,
     deleteExpenseOther,
   } = useStore()
+  const { symbol, format } = useCurrency()
 
   const currentMonth = getCurrentMonthYear()
   const businessExpenses = useMemo(
@@ -124,7 +126,7 @@ export default function ExpensesPage() {
           <h1 className="mt-1 text-2xl font-bold tracking-tight">Expenses</h1>
         </div>
         <div className="rounded-2xl bg-gradient-to-br from-floin-red to-rose-600 px-4 py-2 shadow-sm shadow-floin-red/10">
-          <p className="text-xs font-bold text-white">{formatCurrency(grandTotal)}</p>
+          <p className="text-xs font-bold text-white">{format(grandTotal)}</p>
         </div>
       </div>
 
@@ -139,7 +141,7 @@ export default function ExpensesPage() {
               <label className="flex-1 text-sm font-medium text-foreground">{cat.label}</label>
               <div className="relative w-28">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">
-                  {CURRENCY.symbol}
+                  {symbol}
                 </span>
                 <input
                   type="number"
@@ -156,7 +158,7 @@ export default function ExpensesPage() {
             {cat.id === 'logistics' && deliveryFeesFromSales > 0 && (
               <div className="ml-12 mt-1 flex items-center gap-1.5 px-1">
                 <span className="text-[10px] text-floin-purple font-medium">
-                  + {formatCurrency(deliveryFeesFromSales)} from delivery fees this month
+                  + {format(deliveryFeesFromSales)} from delivery fees this month
                 </span>
               </div>
             )}
@@ -180,7 +182,7 @@ export default function ExpensesPage() {
               >
                 <div>
                   <p className="text-sm font-medium">{other.label}</p>
-                  <p className="text-xs text-muted">{formatCurrency(other.amount)}</p>
+                  <p className="text-xs text-muted">{format(other.amount)}</p>
                 </div>
                 <button
                   onClick={() => deleteExpenseOther(other.id)}
@@ -206,7 +208,7 @@ export default function ExpensesPage() {
           />
           <div className="relative w-24">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">
-              {CURRENCY.symbol}
+              {symbol}
             </span>
             <input
               type="number"

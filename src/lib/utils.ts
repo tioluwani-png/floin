@@ -1,7 +1,8 @@
-import { CURRENCY } from './constants'
+import { getCurrency } from './constants'
 
-export function formatCurrency(amount: number): string {
-  return `${CURRENCY.symbol}${amount.toLocaleString('en-NG')}`
+export function formatCurrency(amount: number, currencyCode?: string): string {
+  const cur = getCurrency(currencyCode)
+  return `${cur.symbol}${amount.toLocaleString(cur.locale)}`
 }
 
 export function formatDate(dateStr: string): string {

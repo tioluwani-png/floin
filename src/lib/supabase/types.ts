@@ -9,6 +9,7 @@ export type Database = {
           type: 'product' | 'service' | 'hybrid'
           currency: string
           channels: string[]
+          logo_base64: string | null
           created_at: string
         }
         Insert: {
@@ -18,6 +19,7 @@ export type Database = {
           type: 'product' | 'service' | 'hybrid'
           currency?: string
           channels?: string[]
+          logo_base64?: string | null
           created_at?: string
         }
         Update: {
@@ -27,6 +29,7 @@ export type Database = {
           type?: 'product' | 'service' | 'hybrid'
           currency?: string
           channels?: string[]
+          logo_base64?: string | null
           created_at?: string
         }
       }

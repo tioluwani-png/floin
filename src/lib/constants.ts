@@ -24,8 +24,22 @@ export const BUSINESS_TYPES = [
   { id: 'hybrid', label: 'Hybrid' },
 ] as const
 
-export const CURRENCY = {
-  code: 'NGN',
-  symbol: '₦',
-  name: 'Nigerian Naira',
+export const CURRENCIES = [
+  { code: 'NGN', symbol: '₦', name: 'Nigerian Naira', locale: 'en-NG' },
+  { code: 'KES', symbol: 'KSh', name: 'Kenyan Shilling', locale: 'en-KE' },
+  { code: 'ZAR', symbol: 'R', name: 'South African Rand', locale: 'en-ZA' },
+  { code: 'GHS', symbol: 'GH₵', name: 'Ghanaian Cedi', locale: 'en-GH' },
+  { code: 'XOF', symbol: 'CFA', name: 'West African CFA', locale: 'fr-SN' },
+  { code: 'USD', symbol: '$', name: 'US Dollar', locale: 'en-US' },
+  { code: 'GBP', symbol: '£', name: 'British Pound', locale: 'en-GB' },
+  { code: 'EUR', symbol: '€', name: 'Euro', locale: 'en-IE' },
+] as const
+
+export type CurrencyCode = (typeof CURRENCIES)[number]['code']
+
+export function getCurrency(code?: string) {
+  return CURRENCIES.find((c) => c.code === code) || CURRENCIES[0]
 }
+
+// Default fallback (NGN)
+export const CURRENCY = CURRENCIES[0]
