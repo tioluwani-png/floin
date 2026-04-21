@@ -9,6 +9,7 @@ import type { ExpenseMonth, ExpenseOther } from '@/lib/supabase/types'
 export default function ExpensesPage() {
   const {
     business,
+    sales,
     expenseMonths,
     expenseOthers,
     upsertExpenseMonth,
@@ -26,6 +27,12 @@ export default function ExpensesPage() {
     () => businessExpenses.find((e) => e.month_year === currentMonth) || null,
     [businessExpenses, currentMonth]
   )
+
+  const deliveryFeesFromSales = useMemo(() => {
+    return sales
+      .filter((s) => s.business_id === (business?.id || 'guest') && s.date.startsWith(currentMonth))
+      .reduce((sum, s) => sum + (s.delivery_fee || 0), 0)
+  }, [sales, business?.id, currentMonth])
 
   const [categories, setCategories] = useState<Record<string, string>>(() => {
     if (currentExpense) {
@@ -57,7 +64,7 @@ export default function ExpensesPage() {
     () => currentOthers.reduce((sum, o) => sum + o.amount, 0),
     [currentOthers]
   )
-  const grandTotal = categoryTotal + othersTotal
+  const grandTotal = categoryTotal + othersTotal + deliveryFeesFromSales
 
   function handleCategoryChange(id: string, value: string) {
     setCategories((prev) => ({ ...prev, [id]: value }))
@@ -124,29 +131,35 @@ export default function ExpensesPage() {
       {/* Categories */}
       <div className="mt-6 space-y-2 stagger-children">
         {EXPENSE_CATEGORIES.map((cat) => (
-          <div
-            key={cat.id}
-            className="flex items-center gap-3 rounded-2xl bg-white p-3.5 shadow-sm border border-border/40"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background text-sm">
-              {categoryIcons[cat.id]}
-            </span>
-            <label className="flex-1 text-sm font-medium text-foreground">{cat.label}</label>
-            <div className="relative w-28">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">
-                {CURRENCY.symbol}
+          <div key={cat.id}>
+            <div className="flex items-center gap-3 rounded-2xl bg-white p-3.5 shadow-sm border border-border/40">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background text-sm">
+                {categoryIcons[cat.id]}
               </span>
-              <input
-                type="number"
-                value={categories[cat.id]}
-                onChange={(e) => handleCategoryChange(cat.id, e.target.value)}
-                onBlur={handleSave}
-                placeholder="0"
-                min="0"
-                step="0.01"
-                className="w-full rounded-xl bg-background py-2.5 pl-7 pr-3 text-sm font-medium text-right outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
-              />
+              <label className="flex-1 text-sm font-medium text-foreground">{cat.label}</label>
+              <div className="relative w-28">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted">
+                  {CURRENCY.symbol}
+                </span>
+                <input
+                  type="number"
+                  value={categories[cat.id]}
+                  onChange={(e) => handleCategoryChange(cat.id, e.target.value)}
+                  onBlur={handleSave}
+                  placeholder="0"
+                  min="0"
+                  step="0.01"
+                  className="w-full rounded-xl bg-background py-2.5 pl-7 pr-3 text-sm font-medium text-right outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+                />
+              </div>
             </div>
+            {cat.id === 'logistics' && deliveryFeesFromSales > 0 && (
+              <div className="ml-12 mt-1 flex items-center gap-1.5 px-1">
+                <span className="text-[10px] text-floin-purple font-medium">
+                  + {formatCurrency(deliveryFeesFromSales)} from delivery fees this month
+                </span>
+              </div>
+            )}
           </div>
         ))}
       </div>

@@ -38,6 +38,7 @@ export type Database = {
           channel: string
           units: number
           amount: number
+          delivery_fee: number
           note: string | null
           created_at: string
         }
@@ -48,6 +49,7 @@ export type Database = {
           channel: string
           units: number
           amount: number
+          delivery_fee?: number
           note?: string | null
           created_at?: string
         }
@@ -58,6 +60,7 @@ export type Database = {
           channel?: string
           units?: number
           amount?: number
+          delivery_fee?: number
           note?: string | null
           created_at?: string
         }

@@ -34,6 +34,7 @@ export default function HistoryPage() {
       const existing = monthMap.get(monthYear) || { monthYear, revenue: 0, expenses: 0, profit: 0, margin: 0, units: 0 }
       existing.revenue += sale.amount
       existing.units += sale.units
+      existing.expenses += (sale.delivery_fee || 0)
       monthMap.set(monthYear, existing)
     })
 

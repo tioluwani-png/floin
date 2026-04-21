@@ -10,11 +10,13 @@ export default function SalesPage() {
   const { sales, business, addSale, deleteSale, updateSale } = useStore()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const [date, setDate] = useState(getTodayDate())
   const [channel, setChannel] = useState(business?.channels?.[0] || 'instagram')
   const [units, setUnits] = useState('')
   const [amount, setAmount] = useState('')
+  const [deliveryFee, setDeliveryFee] = useState('')
   const [note, setNote] = useState('')
 
   const currentMonth = getCurrentMonthYear()
@@ -27,11 +29,23 @@ export default function SalesPage() {
     [businessSales, currentMonth]
   )
 
+  const filteredSales = useMemo(() => {
+    if (!search.trim()) return monthSales
+    const q = search.toLowerCase()
+    return monthSales.filter((s) =>
+      (s.note && s.note.toLowerCase().includes(q)) ||
+      SALES_CHANNELS.find((c) => c.id === s.channel)?.label.toLowerCase().includes(q) ||
+      formatDate(s.date).toLowerCase().includes(q) ||
+      s.amount.toString().includes(q)
+    )
+  }, [monthSales, search])
+
   const totals = useMemo(() => {
     const totalRevenue = monthSales.reduce((sum, s) => sum + s.amount, 0)
     const totalUnits = monthSales.reduce((sum, s) => sum + s.units, 0)
+    const totalDelivery = monthSales.reduce((sum, s) => sum + (s.delivery_fee || 0), 0)
     const avgOrder = monthSales.length > 0 ? totalRevenue / monthSales.length : 0
-    return { totalRevenue, totalUnits, avgOrder, count: monthSales.length }
+    return { totalRevenue, totalUnits, totalDelivery, avgOrder, count: monthSales.length }
   }, [monthSales])
 
   function resetForm() {
@@ -39,6 +53,7 @@ export default function SalesPage() {
     setChannel(business?.channels?.[0] || 'instagram')
     setUnits('')
     setAmount('')
+    setDeliveryFee('')
     setNote('')
     setEditingId(null)
   }
@@ -52,6 +67,7 @@ export default function SalesPage() {
         date, channel,
         units: parseInt(units),
         amount: parseFloat(amount),
+        delivery_fee: parseFloat(deliveryFee) || 0,
         note: note || null,
       })
     } else {
@@ -61,6 +77,7 @@ export default function SalesPage() {
         date, channel,
         units: parseInt(units),
         amount: parseFloat(amount),
+        delivery_fee: parseFloat(deliveryFee) || 0,
         note: note || null,
         created_at: new Date().toISOString(),
       }
@@ -76,6 +93,7 @@ export default function SalesPage() {
     setChannel(sale.channel)
     setUnits(sale.units.toString())
     setAmount(sale.amount.toString())
+    setDeliveryFee((sale.delivery_fee || 0) > 0 ? sale.delivery_fee.toString() : '')
     setNote(sale.note || '')
     setShowForm(true)
   }
@@ -107,9 +125,9 @@ export default function SalesPage() {
           <p className="mt-1 text-sm font-bold text-foreground">{totals.totalUnits}</p>
         </div>
         <div className="rounded-2xl bg-white p-3.5 shadow-sm border border-border/40">
-          <p className="text-[10px] font-medium text-muted">Avg order</p>
+          <p className="text-[10px] font-medium text-muted">Delivery</p>
           <p className="mt-1 text-sm font-bold text-foreground">
-            {formatCurrency(Math.round(totals.avgOrder))}
+            {formatCurrency(totals.totalDelivery)}
           </p>
         </div>
       </div>
@@ -201,6 +219,21 @@ export default function SalesPage() {
               </div>
             </div>
 
+            {/* Delivery fee */}
+            <div>
+              <label className="text-xs font-medium text-muted-dark">Delivery fee ({CURRENCY.symbol}) — optional</label>
+              <input
+                type="number"
+                value={deliveryFee}
+                onChange={(e) => setDeliveryFee(e.target.value)}
+                placeholder="0"
+                min="0"
+                step="0.01"
+                className="mt-1.5 w-full rounded-xl bg-background px-4 py-3 text-sm font-medium outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+              />
+              <p className="mt-1 text-[10px] text-muted">Charged to customer — auto-added to Logistics expenses</p>
+            </div>
+
             {/* Note */}
             <input
               type="text"
@@ -237,28 +270,68 @@ export default function SalesPage() {
         )}
 
         {monthSales.length > 0 && (
-          <div className="space-y-2 stagger-children">
+          <div className="space-y-2">
+            {/* Search bar */}
+            <div className="relative">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted">
+                <path fillRule="evenodd" d="M9.965 11.026a5 5 0 1 1 1.06-1.06l2.755 2.754a.75.75 0 1 1-1.06 1.06l-2.755-2.754ZM10.5 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z" clipRule="evenodd" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by name, channel, date..."
+                className="w-full rounded-xl bg-white pl-10 pr-4 py-2.5 text-sm outline-none ring-1 ring-border/60 transition-all focus:ring-2 focus:ring-floin-green shadow-sm placeholder:text-muted"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-muted hover:text-foreground transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
+                    <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
             <p className="text-xs font-medium text-muted uppercase tracking-wider mb-3">
-              {totals.count} sale{totals.count > 1 ? 's' : ''} this month
+              {search
+                ? `${filteredSales.length} result${filteredSales.length !== 1 ? 's' : ''}`
+                : `${totals.count} sale${totals.count > 1 ? 's' : ''} this month`}
             </p>
-            {monthSales.map((sale) => (
+
+            {filteredSales.length === 0 && search && (
+              <div className="py-8 text-center">
+                <p className="text-sm text-muted">No sales matching &quot;{search}&quot;</p>
+              </div>
+            )}
+
+            {filteredSales.map((sale) => (
               <div
                 key={sale.id}
                 className="group flex items-center justify-between rounded-2xl bg-white p-4 shadow-sm border border-border/40 transition-all duration-200 hover:shadow-md"
               >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-background text-lg">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background text-lg">
                     {SALES_CHANNELS.find((c) => c.id === sale.channel)?.icon || '📦'}
                   </span>
-                  <div>
-                    <p className="text-sm font-semibold">{formatCurrency(sale.amount)}</p>
-                    <p className="mt-0.5 text-xs text-muted">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold">{formatCurrency(sale.amount)}</p>
+                      {(sale.delivery_fee || 0) > 0 && (
+                        <span className="rounded-md bg-floin-purple-light px-1.5 py-0.5 text-[10px] font-semibold text-floin-purple">
+                          +{formatCurrency(sale.delivery_fee)} delivery
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted truncate">
                       {sale.units} unit{sale.units > 1 ? 's' : ''} · {formatDate(sale.date)}
                       {sale.note && <span className="text-muted-dark"> · {sale.note}</span>}
                     </p>
                   </div>
                 </div>
-                <div className="flex gap-0.5">
+                <div className="flex shrink-0 gap-0.5">
                   <button
                     onClick={() => handleEdit(sale)}
                     className="rounded-lg p-2 text-muted hover:bg-background hover:text-foreground transition-colors"

@@ -44,8 +44,9 @@ export default function ReportPage() {
     return monthExpense.production + monthExpense.logistics + monthExpense.marketing + monthExpense.packaging + monthExpense.software + monthExpense.amenities
   }, [monthExpense])
 
+  const deliveryFeesFromSales = useMemo(() => monthSales.reduce((sum, s) => sum + (s.delivery_fee || 0), 0), [monthSales])
   const othersExpenses = useMemo(() => monthOthers.reduce((sum, o) => sum + o.amount, 0), [monthOthers])
-  const totalExpenses = categoryExpenses + othersExpenses
+  const totalExpenses = categoryExpenses + othersExpenses + deliveryFeesFromSales
   const netProfit = totalRevenue - totalExpenses
   const margin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0
 
