@@ -25,7 +25,9 @@ export default function SalesPage() {
     [sales, business?.id]
   )
   const monthSales = useMemo(
-    () => businessSales.filter((s) => s.date.startsWith(currentMonth)),
+    () => businessSales
+      .filter((s) => s.date.startsWith(currentMonth))
+      .sort((a, b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at)),
     [businessSales, currentMonth]
   )
 
