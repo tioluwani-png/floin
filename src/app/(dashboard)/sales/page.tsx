@@ -18,9 +18,13 @@ export default function SalesPage() {
   const [note, setNote] = useState('')
 
   const currentMonth = getCurrentMonthYear()
+  const businessSales = useMemo(
+    () => sales.filter((s) => s.business_id === (business?.id || 'guest')),
+    [sales, business?.id]
+  )
   const monthSales = useMemo(
-    () => sales.filter((s) => s.date.startsWith(currentMonth)),
-    [sales, currentMonth]
+    () => businessSales.filter((s) => s.date.startsWith(currentMonth)),
+    [businessSales, currentMonth]
   )
 
   const totals = useMemo(() => {
@@ -254,10 +258,11 @@ export default function SalesPage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex gap-0.5">
                   <button
                     onClick={() => handleEdit(sale)}
                     className="rounded-lg p-2 text-muted hover:bg-background hover:text-foreground transition-colors"
+                    aria-label="Edit sale"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
                       <path d="m13.488 2.513-1.001-1.001a1.462 1.462 0 0 0-2.07 0L2.71 9.22a.75.75 0 0 0-.198.37l-.582 2.907a.75.75 0 0 0 .882.882l2.907-.582a.75.75 0 0 0 .37-.198l7.706-7.707a1.462 1.462 0 0 0 0-2.07Z" />
@@ -266,6 +271,7 @@ export default function SalesPage() {
                   <button
                     onClick={() => deleteSale(sale.id)}
                     className="rounded-lg p-2 text-muted hover:bg-floin-red-light hover:text-floin-red transition-colors"
+                    aria-label="Delete sale"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
                       <path fillRule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5ZM6.05 6a.75.75 0 0 1 .787.713l.275 5.5a.75.75 0 0 1-1.498.075l-.275-5.5A.75.75 0 0 1 6.05 6Zm3.9 0a.75.75 0 0 1 .712.787l-.275 5.5a.75.75 0 0 1-1.498-.075l.275-5.5A.75.75 0 0 1 9.95 6Z" clipRule="evenodd" />

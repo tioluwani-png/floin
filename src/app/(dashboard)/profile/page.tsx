@@ -6,12 +6,13 @@ import { useStore } from '@/store'
 import { signOut } from '@/lib/supabase/auth'
 import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCY } from '@/lib/constants'
 import { generateId } from '@/lib/utils'
-import type { Product } from '@/lib/supabase/types'
+import type { Business, Product } from '@/lib/supabase/types'
 
 export default function ProfilePage() {
   const router = useRouter()
   const {
-    user, isGuest, business, setBusiness,
+    user, isGuest, business, businesses,
+    setBusiness, addBusiness, switchBusiness, removeBusiness,
     products, addProduct, deleteProduct,
     setOnboardingComplete, setUser, setGuest,
     setSales, setExpenseMonths, setExpenseOthers, setProducts,
@@ -23,6 +24,13 @@ export default function ProfilePage() {
   const [productName, setProductName] = useState('')
   const [productPrice, setProductPrice] = useState('')
   const [showProductForm, setShowProductForm] = useState(false)
+  const [showNewBusiness, setShowNewBusiness] = useState(false)
+  const [newBizName, setNewBizName] = useState('')
+  const [newBizType, setNewBizType] = useState<'product' | 'service' | 'hybrid'>('product')
+  const [newBizChannels, setNewBizChannels] = useState<string[]>(['instagram', 'whatsapp'])
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+
+  const businessProducts = products.filter(p => p.business_id === business?.id)
 
   function toggleChannel(id: string) {
     const updated = channels.includes(id) ? channels.filter((c) => c !== id) : [...channels, id]
@@ -46,6 +54,53 @@ export default function ProfilePage() {
     setShowProductForm(false)
   }
 
+  function handleSwitchBusiness(id: string) {
+    const biz = businesses.find(b => b.id === id)
+    if (!biz) return
+    switchBusiness(id)
+    setName(biz.name)
+    setType(biz.type)
+    setChannels(biz.channels)
+  }
+
+  function handleCreateBusiness() {
+    if (!newBizName.trim()) return
+    const biz: Business = {
+      id: generateId(),
+      user_id: isGuest ? 'guest' : user?.id || 'guest',
+      name: newBizName.trim(),
+      type: newBizType,
+      currency: 'NGN',
+      channels: newBizChannels,
+      created_at: new Date().toISOString(),
+    }
+    addBusiness(biz)
+    setName(biz.name)
+    setType(biz.type)
+    setChannels(biz.channels)
+    setNewBizName('')
+    setNewBizType('product')
+    setNewBizChannels(['instagram', 'whatsapp'])
+    setShowNewBusiness(false)
+  }
+
+  function handleDeleteBusiness(id: string) {
+    removeBusiness(id)
+    setShowDeleteConfirm(null)
+    const remaining = businesses.filter(b => b.id !== id)
+    if (remaining.length > 0) {
+      setName(remaining[0].name)
+      setType(remaining[0].type)
+      setChannels(remaining[0].channels)
+    }
+  }
+
+  function toggleNewBizChannel(id: string) {
+    setNewBizChannels(prev =>
+      prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+    )
+  }
+
   async function handleLogout() {
     try { await signOut() } catch {}
     setUser(null)
@@ -61,81 +116,238 @@ export default function ProfilePage() {
 
   return (
     <div className="animate-fade-up">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-floin-green to-floin-green-dark shadow-sm shadow-floin-green/20">
-          <span className="text-xl font-bold text-white">
-            {(business?.name || 'F')[0].toUpperCase()}
-          </span>
-        </div>
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">{business?.name || 'My Business'}</h1>
-          <p className="text-xs text-muted">
-            {isGuest ? 'Guest mode — data saved locally' : user?.email}
-          </p>
-        </div>
-      </div>
-
-      {/* Business info */}
-      <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm border border-border/40">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Business details</h3>
-
-        <div className="mt-4">
-          <label className="text-xs font-medium text-muted-dark">Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={handleSaveProfile}
-            placeholder="Business name"
-            className="mt-1.5 w-full rounded-xl bg-background px-4 py-3 text-sm font-medium outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
-          />
-        </div>
-
-        <div className="mt-4">
-          <label className="text-xs font-medium text-muted-dark">Type</label>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {BUSINESS_TYPES.map((bt) => (
-              <button
-                key={bt.id}
-                onClick={() => { setType(bt.id); if (business) setBusiness({ ...business, type: bt.id as 'product' | 'service' | 'hybrid' }) }}
-                className={`rounded-xl px-2 py-2.5 text-xs font-medium transition-all duration-200 ${
-                  type === bt.id
-                    ? 'bg-gradient-to-br from-floin-green to-floin-green-dark text-white shadow-sm'
-                    : 'bg-background text-muted-dark ring-1 ring-border'
-                }`}
-              >
-                {bt.label}
-              </button>
-            ))}
+      {/* Header with user info and sign-out */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3.5">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-floin-green to-floin-green-dark shadow-sm shadow-floin-green/20">
+            {user?.avatar_url ? (
+              <img src={user.avatar_url} alt="" className="h-12 w-12 rounded-2xl object-cover" />
+            ) : (
+              <span className="text-lg font-bold text-white">
+                {(user?.name || business?.name || 'F')[0].toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div>
+            <h1 className="text-lg font-bold tracking-tight">{user?.name || 'Guest User'}</h1>
+            <p className="text-xs text-muted">
+              {isGuest ? 'Guest mode' : user?.email}
+            </p>
           </div>
         </div>
+        {!isGuest ? (
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 rounded-xl bg-floin-red-light px-3 py-2 text-xs font-semibold text-floin-red transition-all hover:bg-floin-red/20 active:scale-95"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
+              <path fillRule="evenodd" d="M2 4.75A2.75 2.75 0 0 1 4.75 2h3a2.75 2.75 0 0 1 2.75 2.75v.5a.75.75 0 0 1-1.5 0v-.5c0-.69-.56-1.25-1.25-1.25h-3c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h3c.69 0 1.25-.56 1.25-1.25v-.5a.75.75 0 0 1 1.5 0v.5A2.75 2.75 0 0 1 7.75 14h-3A2.75 2.75 0 0 1 2 11.25v-6.5Zm9.47.47a.75.75 0 0 1 1.06 0l2.25 2.25a.75.75 0 0 1 0 1.06l-2.25 2.25a.75.75 0 1 1-1.06-1.06l.97-.97H5.75a.75.75 0 0 1 0-1.5h6.69l-.97-.97a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+            </svg>
+            Sign out
+          </button>
+        ) : (
+          <button
+            onClick={() => router.push('/login')}
+            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-floin-green to-floin-green-dark px-3 py-2 text-xs font-semibold text-white shadow-sm transition-all active:scale-95"
+          >
+            Sign in
+          </button>
+        )}
+      </div>
 
-        <div className="mt-4">
-          <label className="text-xs font-medium text-muted-dark">Sales channels</label>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {SALES_CHANNELS.map((ch) => (
-              <button
-                key={ch.id}
-                onClick={() => toggleChannel(ch.id)}
-                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium transition-all duration-200 ${
-                  channels.includes(ch.id)
-                    ? 'bg-gradient-to-r from-floin-green to-floin-green-dark text-white shadow-sm'
-                    : 'bg-background text-muted-dark ring-1 ring-border'
+      {/* Business switcher */}
+      <div className="mt-5 rounded-2xl bg-white p-4 shadow-sm border border-border/40">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-muted">My Businesses</h3>
+          <button
+            onClick={() => setShowNewBusiness(!showNewBusiness)}
+            className="rounded-lg bg-floin-green-light px-2.5 py-1 text-xs font-semibold text-floin-green-dark transition-colors hover:bg-floin-green/20"
+          >
+            {showNewBusiness ? 'Cancel' : '+ New'}
+          </button>
+        </div>
+
+        {/* Business list */}
+        <div className="mt-3 space-y-1.5">
+          {businesses.map((biz) => (
+            <div key={biz.id}>
+              <div
+                className={`flex items-center justify-between rounded-xl p-3 transition-all duration-200 ${
+                  biz.id === business?.id
+                    ? 'bg-gradient-to-r from-floin-green/10 to-floin-green-dark/5 ring-1 ring-floin-green/30'
+                    : 'bg-background hover:bg-background/80'
                 }`}
               >
-                <span className="text-sm">{ch.icon}</span>
-                {ch.label}
-              </button>
-            ))}
-          </div>
+                <button
+                  onClick={() => handleSwitchBusiness(biz.id)}
+                  className="flex items-center gap-2.5 text-left flex-1 min-w-0"
+                >
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                    biz.id === business?.id
+                      ? 'bg-floin-green text-white'
+                      : 'bg-white text-muted-dark ring-1 ring-border'
+                  }`}>
+                    {biz.name[0].toUpperCase()}
+                  </span>
+                  <div className="min-w-0">
+                    <p className={`text-sm font-medium truncate ${biz.id === business?.id ? 'text-floin-green-dark' : ''}`}>
+                      {biz.name}
+                    </p>
+                    <p className="text-[10px] text-muted capitalize">{biz.type}</p>
+                  </div>
+                </button>
+                {biz.id === business?.id && (
+                  <span className="shrink-0 rounded-full bg-floin-green px-2 py-0.5 text-[10px] font-bold text-white">
+                    Active
+                  </span>
+                )}
+                {businesses.length > 1 && biz.id !== business?.id && (
+                  <button
+                    onClick={() => setShowDeleteConfirm(biz.id)}
+                    className="shrink-0 rounded-lg p-1.5 text-muted hover:bg-floin-red-light hover:text-floin-red transition-colors"
+                    aria-label="Delete business"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                      <path fillRule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5Z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              {/* Delete confirmation */}
+              {showDeleteConfirm === biz.id && (
+                <div className="mt-1.5 flex items-center gap-2 rounded-xl bg-floin-red-light/60 p-3 animate-scale-in">
+                  <p className="flex-1 text-xs text-floin-red">Delete &quot;{biz.name}&quot;? Data for this business won&apos;t be removed.</p>
+                  <button onClick={() => handleDeleteBusiness(biz.id)} className="rounded-lg bg-floin-red px-2.5 py-1 text-xs font-bold text-white">Delete</button>
+                  <button onClick={() => setShowDeleteConfirm(null)} className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted-dark">Cancel</button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
 
-        <div className="mt-4 flex items-center justify-between rounded-xl bg-background p-3">
-          <span className="text-xs text-muted-dark">Currency</span>
-          <span className="text-xs font-semibold">{CURRENCY.name} ({CURRENCY.symbol})</span>
-        </div>
+        {/* Add new business form */}
+        {showNewBusiness && (
+          <div className="mt-3 rounded-xl bg-background p-4 animate-scale-in space-y-3">
+            <input
+              type="text"
+              value={newBizName}
+              onChange={(e) => setNewBizName(e.target.value)}
+              placeholder="Business name"
+              className="w-full rounded-xl bg-white px-4 py-3 text-sm font-medium outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+              autoFocus
+            />
+            <div>
+              <label className="text-xs font-medium text-muted-dark">Type</label>
+              <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                {BUSINESS_TYPES.map((bt) => (
+                  <button
+                    key={bt.id}
+                    type="button"
+                    onClick={() => setNewBizType(bt.id as typeof newBizType)}
+                    className={`rounded-lg px-2 py-2 text-xs font-medium transition-all ${
+                      newBizType === bt.id
+                        ? 'bg-floin-green text-white'
+                        : 'bg-white text-muted-dark ring-1 ring-border'
+                    }`}
+                  >
+                    {bt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-dark">Channels</label>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {SALES_CHANNELS.map((ch) => (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() => toggleNewBizChannel(ch.id)}
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-medium transition-all ${
+                      newBizChannels.includes(ch.id)
+                        ? 'bg-floin-green text-white'
+                        : 'bg-white text-muted-dark ring-1 ring-border'
+                    }`}
+                  >
+                    <span className="text-xs">{ch.icon}</span>
+                    {ch.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={handleCreateBusiness}
+              disabled={!newBizName.trim()}
+              className="w-full rounded-xl bg-gradient-to-r from-floin-green to-floin-green-dark py-3 text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-40"
+            >
+              Create business
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Active business details */}
+      {business && (
+        <div className="mt-4 rounded-2xl bg-white p-5 shadow-sm border border-border/40">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Business details</h3>
+
+          <div className="mt-4">
+            <label className="text-xs font-medium text-muted-dark">Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={handleSaveProfile}
+              placeholder="Business name"
+              className="mt-1.5 w-full rounded-xl bg-background px-4 py-3 text-sm font-medium outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
+            />
+          </div>
+
+          <div className="mt-4">
+            <label className="text-xs font-medium text-muted-dark">Type</label>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {BUSINESS_TYPES.map((bt) => (
+                <button
+                  key={bt.id}
+                  onClick={() => { setType(bt.id); if (business) setBusiness({ ...business, type: bt.id as 'product' | 'service' | 'hybrid' }) }}
+                  className={`rounded-xl px-2 py-2.5 text-xs font-medium transition-all duration-200 ${
+                    type === bt.id
+                      ? 'bg-gradient-to-br from-floin-green to-floin-green-dark text-white shadow-sm'
+                      : 'bg-background text-muted-dark ring-1 ring-border'
+                  }`}
+                >
+                  {bt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="text-xs font-medium text-muted-dark">Sales channels</label>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {SALES_CHANNELS.map((ch) => (
+                <button
+                  key={ch.id}
+                  onClick={() => toggleChannel(ch.id)}
+                  className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium transition-all duration-200 ${
+                    channels.includes(ch.id)
+                      ? 'bg-gradient-to-r from-floin-green to-floin-green-dark text-white shadow-sm'
+                      : 'bg-background text-muted-dark ring-1 ring-border'
+                  }`}
+                >
+                  <span className="text-sm">{ch.icon}</span>
+                  {ch.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between rounded-xl bg-background p-3">
+            <span className="text-xs text-muted-dark">Currency</span>
+            <span className="text-xs font-semibold">{CURRENCY.name} ({CURRENCY.symbol})</span>
+          </div>
+        </div>
+      )}
 
       {/* Product catalogue */}
       <div className="mt-4 rounded-2xl bg-white p-5 shadow-sm border border-border/40">
@@ -175,15 +387,15 @@ export default function ProfilePage() {
           </form>
         )}
 
-        {products.length > 0 ? (
+        {businessProducts.length > 0 ? (
           <div className="mt-3 space-y-2">
-            {products.map((p) => (
-              <div key={p.id} className="group flex items-center justify-between rounded-xl bg-background p-3">
+            {businessProducts.map((p) => (
+              <div key={p.id} className="flex items-center justify-between rounded-xl bg-background p-3">
                 <div>
                   <p className="text-sm font-medium">{p.name}</p>
                   <p className="text-xs text-muted">{CURRENCY.symbol}{p.price.toLocaleString()}</p>
                 </div>
-                <button onClick={() => deleteProduct(p.id)} className="text-xs font-medium text-muted opacity-0 group-hover:opacity-100 hover:text-floin-red transition-all">Remove</button>
+                <button onClick={() => deleteProduct(p.id)} className="text-xs font-medium text-muted hover:text-floin-red transition-all">Remove</button>
               </div>
             ))}
           </div>
@@ -192,7 +404,7 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {/* Actions */}
+      {/* Bottom actions */}
       <div className="mt-6 space-y-3">
         {isGuest && (
           <button
@@ -206,7 +418,7 @@ export default function ProfilePage() {
           onClick={handleLogout}
           className="w-full rounded-2xl border-2 border-floin-red/20 py-3.5 text-sm font-semibold text-floin-red transition-all hover:bg-floin-red-light hover:border-floin-red/40 active:scale-[0.98]"
         >
-          {isGuest ? 'Clear all data' : 'Sign out'}
+          {isGuest ? 'Clear all data' : 'Sign out & clear data'}
         </button>
       </div>
     </div>

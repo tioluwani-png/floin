@@ -15,12 +15,21 @@ interface MonthSummary {
 }
 
 export default function HistoryPage() {
-  const { sales, expenseMonths, expenseOthers } = useStore()
+  const { sales, expenseMonths, expenseOthers, business } = useStore()
+
+  const businessSales = useMemo(
+    () => sales.filter((s) => s.business_id === (business?.id || 'guest')),
+    [sales, business?.id]
+  )
+  const businessExpenses = useMemo(
+    () => expenseMonths.filter((e) => e.business_id === (business?.id || 'guest')),
+    [expenseMonths, business?.id]
+  )
 
   const months = useMemo(() => {
     const monthMap = new Map<string, MonthSummary>()
 
-    sales.forEach((sale) => {
+    businessSales.forEach((sale) => {
       const monthYear = sale.date.substring(0, 7)
       const existing = monthMap.get(monthYear) || { monthYear, revenue: 0, expenses: 0, profit: 0, margin: 0, units: 0 }
       existing.revenue += sale.amount
@@ -28,7 +37,7 @@ export default function HistoryPage() {
       monthMap.set(monthYear, existing)
     })
 
-    expenseMonths.forEach((expense) => {
+    businessExpenses.forEach((expense) => {
       const existing = monthMap.get(expense.month_year) || { monthYear: expense.month_year, revenue: 0, expenses: 0, profit: 0, margin: 0, units: 0 }
       const catTotal = expense.production + expense.logistics + expense.marketing + expense.packaging + expense.software + expense.amenities
       const othersTotal = expenseOthers.filter((o) => o.expense_month_id === expense.id).reduce((sum, o) => sum + o.amount, 0)
@@ -43,7 +52,7 @@ export default function HistoryPage() {
         margin: m.revenue > 0 ? ((m.revenue - m.expenses) / m.revenue) * 100 : 0,
       }))
       .sort((a, b) => b.monthYear.localeCompare(a.monthYear))
-  }, [sales, expenseMonths, expenseOthers])
+  }, [businessSales, businessExpenses, expenseOthers])
 
   const bestMonth = useMemo(() => months.reduce((best, m) => (m.profit > (best?.profit || -Infinity) ? m : best), months[0]), [months])
   const worstMonth = useMemo(() => months.reduce((worst, m) => (m.profit < (worst?.profit || Infinity) ? m : worst), months[0]), [months])

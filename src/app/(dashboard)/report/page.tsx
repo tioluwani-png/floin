@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { useStore } from '@/store'
 import { SALES_CHANNELS, EXPENSE_CATEGORIES, CURRENCY } from '@/lib/constants'
 import { formatCurrency, getCurrentMonthYear, getMonthLabel } from '@/lib/utils'
@@ -9,18 +9,26 @@ import { ExportButton } from '@/components/report/ExportButton'
 import { ShareButton } from '@/components/report/ShareButton'
 
 export default function ReportPage() {
-  const { sales, expenseMonths, expenseOthers } = useStore()
+  const { sales, expenseMonths, expenseOthers, business } = useStore()
   const currentMonth = getCurrentMonthYear()
-  const reportRef = useRef<HTMLDivElement>(null)
+
+  const businessSales = useMemo(
+    () => sales.filter((s) => s.business_id === (business?.id || 'guest')),
+    [sales, business?.id]
+  )
+  const businessExpenses = useMemo(
+    () => expenseMonths.filter((e) => e.business_id === (business?.id || 'guest')),
+    [expenseMonths, business?.id]
+  )
 
   const monthSales = useMemo(
-    () => sales.filter((s) => s.date.startsWith(currentMonth)),
-    [sales, currentMonth]
+    () => businessSales.filter((s) => s.date.startsWith(currentMonth)),
+    [businessSales, currentMonth]
   )
 
   const monthExpense = useMemo(
-    () => expenseMonths.find((e) => e.month_year === currentMonth),
-    [expenseMonths, currentMonth]
+    () => businessExpenses.find((e) => e.month_year === currentMonth),
+    [businessExpenses, currentMonth]
   )
 
   const monthOthers = useMemo(
@@ -62,7 +70,29 @@ export default function ReportPage() {
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight">Report</h1>
         </div>
-        {hasData && <ExportButton reportRef={reportRef} monthLabel={getMonthLabel(currentMonth)} />}
+        {hasData && (
+          <ExportButton
+            monthLabel={getMonthLabel(currentMonth)}
+            businessName={business?.name || 'My Business'}
+            revenue={totalRevenue}
+            expenses={totalExpenses}
+            profit={netProfit}
+            margin={margin}
+            units={totalUnits}
+            salesCount={monthSales.length}
+            channelData={channelData}
+            expenseBreakdown={[
+              ...EXPENSE_CATEGORIES.filter(cat => monthExpense && (monthExpense[cat.id as keyof typeof monthExpense] as number) > 0).map(cat => ({
+                label: cat.label,
+                amount: (monthExpense?.[cat.id as keyof typeof monthExpense] as number) || 0,
+              })),
+              ...monthOthers.map(o => ({ label: o.label, amount: o.amount })),
+            ]}
+            directUnits={directUnits}
+            distributorUnits={distributorUnits}
+            avgOrder={monthSales.length > 0 ? totalRevenue / monthSales.length : 0}
+          />
+        )}
       </div>
 
       {!hasData ? (
@@ -74,7 +104,7 @@ export default function ReportPage() {
           <p className="mt-1 text-xs text-muted">Log some sales and expenses to see your report</p>
         </div>
       ) : (
-        <div ref={reportRef}>
+        <div>
           {/* Hero profit card */}
           <div className={`mt-6 rounded-3xl p-6 ${netProfit >= 0 ? 'bg-gradient-to-br from-floin-green to-emerald-600' : 'bg-gradient-to-br from-floin-red to-rose-600'} shadow-lg ${netProfit >= 0 ? 'shadow-floin-green/20' : 'shadow-floin-red/20'}`}>
             <p className="text-xs font-medium text-white/70">Net Profit</p>

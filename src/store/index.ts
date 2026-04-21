@@ -16,9 +16,14 @@ interface FloinState {
   setUser: (user: User | null) => void
   setGuest: (isGuest: boolean) => void
 
-  // Business
+  // Business (multi-business)
   business: Business | null
+  businesses: Business[]
+  activeBusinessId: string | null
   setBusiness: (business: Business | null) => void
+  addBusiness: (business: Business) => void
+  switchBusiness: (id: string) => void
+  removeBusiness: (id: string) => void
 
   // Sales
   sales: SalesEntry[]
@@ -56,9 +61,36 @@ export const useStore = create<FloinState>()(
       setUser: (user) => set({ user, isGuest: !user }),
       setGuest: (isGuest) => set({ isGuest }),
 
-      // Business
+      // Business (multi-business)
       business: null,
-      setBusiness: (business) => set({ business }),
+      businesses: [],
+      activeBusinessId: null,
+      setBusiness: (business) => set((state) => {
+        if (!business) return { business: null, activeBusinessId: null }
+        const idx = state.businesses.findIndex(b => b.id === business.id)
+        const businesses = idx >= 0
+          ? state.businesses.map(b => b.id === business.id ? business : b)
+          : [...state.businesses, business]
+        return { business, businesses, activeBusinessId: business.id }
+      }),
+      addBusiness: (business) => set((state) => ({
+        businesses: [...state.businesses, business],
+        business,
+        activeBusinessId: business.id,
+      })),
+      switchBusiness: (id) => set((state) => ({
+        business: state.businesses.find(b => b.id === id) || state.business,
+        activeBusinessId: id,
+      })),
+      removeBusiness: (id) => set((state) => {
+        const businesses = state.businesses.filter(b => b.id !== id)
+        const next = businesses[0] || null
+        return {
+          businesses,
+          business: next,
+          activeBusinessId: next?.id || null,
+        }
+      }),
 
       // Sales
       sales: [],
@@ -109,6 +141,13 @@ export const useStore = create<FloinState>()(
     }),
     {
       name: 'floin-storage',
+      onRehydrateStorage: () => (state) => {
+        // Migrate: if old single-business exists but businesses array is empty
+        if (state && state.business && state.businesses.length === 0) {
+          state.businesses = [state.business]
+          state.activeBusinessId = state.business.id
+        }
+      },
     }
   )
 )
