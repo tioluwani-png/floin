@@ -7,7 +7,7 @@ import { formatCurrency, formatDate, generateId, getTodayDate, getCurrentMonthYe
 import type { SalesEntry } from '@/lib/supabase/types'
 
 export default function SalesPage() {
-  const { sales, business, addSale, deleteSale, updateSale } = useStore()
+  const { sales, business, products, addSale, deleteSale, updateSale } = useStore()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -98,6 +98,17 @@ export default function SalesPage() {
     setDeliveryFee((sale.delivery_fee || 0) > 0 ? sale.delivery_fee.toString() : '')
     setNote(sale.note || '')
     setShowForm(true)
+  }
+
+  const businessProducts = useMemo(
+    () => products.filter((p) => p.business_id === (business?.id || 'guest')),
+    [products, business?.id]
+  )
+
+  function handleSelectProduct(productName: string, productPrice: number) {
+    setAmount(productPrice.toString())
+    if (!units) setUnits('1')
+    setNote(productName)
   }
 
   const channels = business?.channels?.length
@@ -192,6 +203,29 @@ export default function SalesPage() {
                 ))}
               </div>
             </div>
+
+            {/* Product quick-select */}
+            {businessProducts.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-muted-dark">Quick select product</label>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {businessProducts.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleSelectProduct(p.name, p.price)}
+                      className={`rounded-xl px-3 py-2 text-xs font-medium transition-all duration-200 ${
+                        note === p.name && amount === p.price.toString()
+                          ? 'bg-gradient-to-r from-floin-purple to-floin-purple-dark text-white shadow-sm'
+                          : 'bg-background text-muted-dark ring-1 ring-border hover:ring-floin-purple/40'
+                      }`}
+                    >
+                      {p.name} · {CURRENCY.symbol}{p.price.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Units + Amount */}
             <div className="grid grid-cols-2 gap-3">
