@@ -269,7 +269,7 @@ export default function SalesPage() {
                 step="0.01"
                 className="mt-1.5 w-full rounded-xl bg-background px-4 py-3 text-sm font-medium outline-none ring-1 ring-border transition-all focus:ring-2 focus:ring-floin-green"
               />
-              <p className="mt-1 text-[10px] text-muted">Charged to customer — auto-added to Logistics expenses</p>
+              <p className="mt-1 text-[10px] text-muted">Charged to customer — not deducted from your profit</p>
             </div>
 
             {/* Note */}
