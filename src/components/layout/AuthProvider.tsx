@@ -24,6 +24,9 @@ function syncFromCloud(userId: string) {
       s.setExpenseMonths(merged.expenseMonths)
       s.setExpenseOthers(merged.expenseOthers)
       s.setProducts(merged.products)
+      if (merged.businesses.length > 0) {
+        s.setOnboardingComplete(true)
+      }
     }
   ).catch((err) => {
     console.error('Cloud restore failed:', err)

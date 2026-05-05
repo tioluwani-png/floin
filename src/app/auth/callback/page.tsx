@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { useStore } from '@/store'
+import { restoreAndMerge } from '@/lib/supabase/restore'
 
 export default function AuthCallbackPage() {
   const router = useRouter()
@@ -60,7 +61,47 @@ export default function AuthCallbackPage() {
             avatar_url: session.user.user_metadata?.avatar_url,
           })
           setGuest(false)
-          router.replace(onboardingComplete ? '/sales' : '/onboarding')
+
+          // If onboarding already done (same device), go straight to dashboard
+          if (onboardingComplete) {
+            router.replace('/sales')
+            return
+          }
+
+          // onboardingComplete is false — could be new device. Try cloud restore.
+          try {
+            const state = useStore.getState()
+            await restoreAndMerge(
+              session.user.id,
+              {
+                businesses: state.businesses,
+                business: state.business,
+                sales: state.sales,
+                expenseMonths: state.expenseMonths,
+                expenseOthers: state.expenseOthers,
+                products: state.products,
+              },
+              (merged) => {
+                const s = useStore.getState()
+                s.setBusinesses(merged.businesses, merged.activeBusiness)
+                s.setSales(merged.sales)
+                s.setExpenseMonths(merged.expenseMonths)
+                s.setExpenseOthers(merged.expenseOthers)
+                s.setProducts(merged.products)
+              }
+            )
+            const updated = useStore.getState()
+            if (updated.businesses.length > 0) {
+              updated.setOnboardingComplete(true)
+              router.replace('/sales')
+              return
+            }
+          } catch (err) {
+            console.error('Cloud restore in callback failed:', err)
+          }
+
+          // No cloud data either — genuinely new user
+          router.replace('/onboarding')
         } else {
           setError('Could not sign you in. Please try again.')
           setTimeout(() => router.replace('/login'), 2000)

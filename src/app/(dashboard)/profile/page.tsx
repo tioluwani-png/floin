@@ -17,7 +17,7 @@ export default function ProfilePage() {
     user, isGuest, business, businesses,
     setBusiness, addBusiness, switchBusiness, removeBusiness,
     products, addProduct, deleteProduct,
-    setOnboardingComplete, setUser, setGuest,
+    setUser, setGuest,
     setSales, setExpenseMonths, setExpenseOthers, setProducts,
   } = useCloudSync()
 
@@ -126,12 +126,6 @@ export default function ProfilePage() {
     try { await signOut() } catch {}
     setUser(null)
     setGuest(true)
-    setOnboardingComplete(false)
-    setBusiness(null)
-    setSales([])
-    setExpenseMonths([])
-    setExpenseOthers([])
-    setProducts([])
     router.push('/login')
   }
 
@@ -569,7 +563,7 @@ export default function ProfilePage() {
           onClick={handleLogout}
           className="w-full rounded-2xl border-2 border-floin-red/20 py-3.5 text-sm font-semibold text-floin-red transition-all hover:bg-floin-red-light hover:border-floin-red/40 active:scale-[0.98]"
         >
-          {isGuest ? 'Clear all data' : 'Sign out & clear data'}
+          {isGuest ? 'Clear all data' : 'Sign out'}
         </button>
       </div>
     </div>
