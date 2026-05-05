@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useStore } from '@/store'
+import { useCloudSync } from '@/hooks/useCloudSync'
 import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCIES } from '@/lib/constants'
 import { generateId } from '@/lib/utils'
 import type { Business } from '@/lib/supabase/types'
@@ -11,7 +11,7 @@ type Step = 1 | 2 | 3 | 4
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const { user, isGuest, setBusiness, setOnboardingComplete } = useStore()
+  const { user, isGuest, addBusiness, setOnboardingComplete } = useCloudSync()
   const [step, setStep] = useState<Step>(1)
 
   const [businessName, setBusinessName] = useState('')
@@ -38,7 +38,7 @@ export default function OnboardingPage() {
       logo_base64: null,
       created_at: new Date().toISOString(),
     }
-    setBusiness(business)
+    addBusiness(business)
     setOnboardingComplete(true)
     router.push('/sales')
   }
