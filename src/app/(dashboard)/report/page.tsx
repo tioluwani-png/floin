@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { useStore } from '@/store'
 import { SALES_CHANNELS, EXPENSE_CATEGORIES } from '@/lib/constants'
 import { getCurrentMonthYear, getMonthLabel } from '@/lib/utils'
+import { MonthNavigator } from '@/components/ui/MonthNavigator'
 import { useCurrency } from '@/hooks/useCurrency'
 import { ChannelChart } from '@/components/report/ChannelChart'
 import { ExportButton } from '@/components/report/ExportButton'
@@ -12,7 +13,7 @@ import { ShareButton } from '@/components/report/ShareButton'
 export default function ReportPage() {
   const { sales, expenseMonths, expenseOthers, business } = useStore()
   const { symbol, format, code: currencyCode } = useCurrency()
-  const currentMonth = getCurrentMonthYear()
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthYear())
 
   const businessSales = useMemo(
     () => sales.filter((s) => s.business_id === (business?.id || 'guest')),
@@ -24,13 +25,13 @@ export default function ReportPage() {
   )
 
   const monthSales = useMemo(
-    () => businessSales.filter((s) => s.date.startsWith(currentMonth)),
-    [businessSales, currentMonth]
+    () => businessSales.filter((s) => s.date.startsWith(selectedMonth)),
+    [businessSales, selectedMonth]
   )
 
   const monthExpense = useMemo(
-    () => businessExpenses.find((e) => e.month_year === currentMonth),
-    [businessExpenses, currentMonth]
+    () => businessExpenses.find((e) => e.month_year === selectedMonth),
+    [businessExpenses, selectedMonth]
   )
 
   const monthOthers = useMemo(
@@ -67,14 +68,12 @@ export default function ReportPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs font-medium text-muted uppercase tracking-wider">
-            {getMonthLabel(currentMonth)}
-          </p>
+          <MonthNavigator selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} />
           <h1 className="mt-1 text-2xl font-bold tracking-tight">Report</h1>
         </div>
         {hasData && (
           <ExportButton
-            monthLabel={getMonthLabel(currentMonth)}
+            monthLabel={getMonthLabel(selectedMonth)}
             businessName={business?.name || 'My Business'}
             revenue={totalRevenue}
             expenses={totalExpenses}
@@ -229,7 +228,7 @@ export default function ReportPage() {
 
           {/* Share */}
           <ShareButton
-            monthLabel={getMonthLabel(currentMonth)}
+            monthLabel={getMonthLabel(selectedMonth)}
             revenue={totalRevenue}
             expenses={totalExpenses}
             profit={netProfit}

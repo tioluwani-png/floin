@@ -13,6 +13,16 @@ export async function fetchBusiness(userId: string) {
   return data as Business | null
 }
 
+export async function fetchBusinesses(userId: string) {
+  const { data, error } = await supabase
+    .from('businesses')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data || []) as unknown as Business[]
+}
+
 export async function createBusiness(business: Record<string, unknown>) {
   const { data, error } = await supabase
     .from('businesses')

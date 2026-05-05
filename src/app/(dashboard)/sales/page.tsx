@@ -5,6 +5,7 @@ import { useStore } from '@/store'
 import { SALES_CHANNELS } from '@/lib/constants'
 import { useCurrency } from '@/hooks/useCurrency'
 import { formatDate, generateId, getTodayDate, getCurrentMonthYear } from '@/lib/utils'
+import { MonthNavigator } from '@/components/ui/MonthNavigator'
 import type { SalesEntry } from '@/lib/supabase/types'
 
 export default function SalesPage() {
@@ -21,16 +22,16 @@ export default function SalesPage() {
   const [deliveryFee, setDeliveryFee] = useState('')
   const [note, setNote] = useState('')
 
-  const currentMonth = getCurrentMonthYear()
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthYear())
   const businessSales = useMemo(
     () => sales.filter((s) => s.business_id === (business?.id || 'guest')),
     [sales, business?.id]
   )
   const monthSales = useMemo(
     () => businessSales
-      .filter((s) => s.date.startsWith(currentMonth))
+      .filter((s) => s.date.startsWith(selectedMonth))
       .sort((a, b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at)),
-    [businessSales, currentMonth]
+    [businessSales, selectedMonth]
   )
 
   const filteredSales = useMemo(() => {
@@ -121,9 +122,7 @@ export default function SalesPage() {
     <div className="animate-fade-up">
       {/* Header */}
       <div>
-        <p className="text-xs font-medium text-muted uppercase tracking-wider">
-          {new Date().toLocaleDateString('en-NG', { month: 'long', year: 'numeric' })}
-        </p>
+        <MonthNavigator selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} />
         <h1 className="mt-1 text-2xl font-bold tracking-tight">Sales</h1>
       </div>
 
@@ -336,7 +335,7 @@ export default function SalesPage() {
             <p className="text-xs font-medium text-muted uppercase tracking-wider mb-3">
               {search
                 ? `${filteredSales.length} result${filteredSales.length !== 1 ? 's' : ''}`
-                : `${totals.count} sale${totals.count > 1 ? 's' : ''} this month`}
+                : `${totals.count} sale${totals.count !== 1 ? 's' : ''}`}
             </p>
 
             {filteredSales.length === 0 && search && (

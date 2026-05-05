@@ -21,6 +21,7 @@ interface FloinState {
   businesses: Business[]
   activeBusinessId: string | null
   setBusiness: (business: Business | null) => void
+  setBusinesses: (businesses: Business[], activeBusiness: Business | null) => void
   addBusiness: (business: Business) => void
   switchBusiness: (id: string) => void
   removeBusiness: (id: string) => void
@@ -65,6 +66,11 @@ export const useStore = create<FloinState>()(
       business: null,
       businesses: [],
       activeBusinessId: null,
+      setBusinesses: (businesses, activeBusiness) => set({
+        businesses,
+        business: activeBusiness,
+        activeBusinessId: activeBusiness?.id || null,
+      }),
       setBusiness: (business) => set((state) => {
         if (!business) return { business: null, activeBusinessId: null }
         const idx = state.businesses.findIndex(b => b.id === business.id)

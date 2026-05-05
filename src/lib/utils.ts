@@ -24,6 +24,18 @@ export function getMonthLabel(monthYear: string): string {
   return date.toLocaleDateString('en-NG', { month: 'long', year: 'numeric' })
 }
 
+export function getPrevMonth(monthYear: string): string {
+  const [year, month] = monthYear.split('-').map(Number)
+  const d = new Date(year, month - 2, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function getNextMonth(monthYear: string): string {
+  const [year, month] = monthYear.split('-').map(Number)
+  const d = new Date(year, month, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 export function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
 }

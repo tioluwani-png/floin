@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useStore } from '@/store'
 import { EXPENSE_CATEGORIES } from '@/lib/constants'
-import { getCurrentMonthYear, getMonthLabel, generateId } from '@/lib/utils'
+import { getCurrentMonthYear, generateId } from '@/lib/utils'
+import { MonthNavigator } from '@/components/ui/MonthNavigator'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { ExpenseMonth, ExpenseOther } from '@/lib/supabase/types'
 
@@ -19,36 +20,41 @@ export default function ExpensesPage() {
   } = useStore()
   const { symbol, format } = useCurrency()
 
-  const currentMonth = getCurrentMonthYear()
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthYear())
   const businessExpenses = useMemo(
     () => expenseMonths.filter((e) => e.business_id === (business?.id || 'guest')),
     [expenseMonths, business?.id]
   )
 
   const currentExpense = useMemo(
-    () => businessExpenses.find((e) => e.month_year === currentMonth) || null,
-    [businessExpenses, currentMonth]
+    () => businessExpenses.find((e) => e.month_year === selectedMonth) || null,
+    [businessExpenses, selectedMonth]
   )
 
   const deliveryFeesFromSales = useMemo(() => {
     return sales
-      .filter((s) => s.business_id === (business?.id || 'guest') && s.date.startsWith(currentMonth))
+      .filter((s) => s.business_id === (business?.id || 'guest') && s.date.startsWith(selectedMonth))
       .reduce((sum, s) => sum + (s.delivery_fee || 0), 0)
-  }, [sales, business?.id, currentMonth])
+  }, [sales, business?.id, selectedMonth])
 
-  const [categories, setCategories] = useState<Record<string, string>>(() => {
+  const [categories, setCategories] = useState<Record<string, string>>({
+    production: '', logistics: '', marketing: '', packaging: '', software: '', amenities: '',
+  })
+
+  useEffect(() => {
     if (currentExpense) {
-      return {
+      setCategories({
         production: currentExpense.production?.toString() || '',
         logistics: currentExpense.logistics?.toString() || '',
         marketing: currentExpense.marketing?.toString() || '',
         packaging: currentExpense.packaging?.toString() || '',
         software: currentExpense.software?.toString() || '',
         amenities: currentExpense.amenities?.toString() || '',
-      }
+      })
+    } else {
+      setCategories({ production: '', logistics: '', marketing: '', packaging: '', software: '', amenities: '' })
     }
-    return { production: '', logistics: '', marketing: '', packaging: '', software: '', amenities: '' }
-  })
+  }, [selectedMonth, currentExpense])
 
   const currentOthers = useMemo(
     () => (currentExpense ? expenseOthers.filter((o) => o.expense_month_id === currentExpense.id) : []),
@@ -76,7 +82,7 @@ export default function ExpensesPage() {
     const expense: ExpenseMonth = {
       id: currentExpense?.id || generateId(),
       business_id: business?.id || 'guest',
-      month_year: currentMonth,
+      month_year: selectedMonth,
       production: parseFloat(categories.production) || 0,
       logistics: parseFloat(categories.logistics) || 0,
       marketing: parseFloat(categories.marketing) || 0,
@@ -120,9 +126,7 @@ export default function ExpensesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs font-medium text-muted uppercase tracking-wider">
-            {getMonthLabel(currentMonth)}
-          </p>
+          <MonthNavigator selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} />
           <h1 className="mt-1 text-2xl font-bold tracking-tight">Expenses</h1>
         </div>
         <div className="rounded-2xl bg-gradient-to-br from-floin-red to-rose-600 px-4 py-2 shadow-sm shadow-floin-red/10">

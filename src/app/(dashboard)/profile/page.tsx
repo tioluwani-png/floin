@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/store'
 import { signOut } from '@/lib/supabase/auth'
+import { restoreAndMerge } from '@/lib/supabase/restore'
 import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCIES, getCurrency } from '@/lib/constants'
 import { generateId } from '@/lib/utils'
 import { compressImage } from '@/lib/imageUtils'
@@ -31,6 +32,8 @@ export default function ProfilePage() {
   const [newBizChannels, setNewBizChannels] = useState<string[]>(['instagram', 'whatsapp'])
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [newBizCurrency, setNewBizCurrency] = useState('NGN')
+  const [restoring, setRestoring] = useState(false)
+  const [restoreMessage, setRestoreMessage] = useState<string | null>(null)
 
   const businessProducts = products.filter(p => p.business_id === business?.id)
   const activeCurrency = getCurrency(business?.currency)
@@ -129,6 +132,41 @@ export default function ProfilePage() {
     setExpenseOthers([])
     setProducts([])
     router.push('/login')
+  }
+
+  async function handleRestoreFromCloud() {
+    if (!user || isGuest) return
+    setRestoring(true)
+    setRestoreMessage(null)
+    try {
+      const state = useStore.getState()
+      await restoreAndMerge(
+        user.id,
+        {
+          businesses: state.businesses,
+          business: state.business,
+          sales: state.sales,
+          expenseMonths: state.expenseMonths,
+          expenseOthers: state.expenseOthers,
+          products: state.products,
+        },
+        (merged) => {
+          const s = useStore.getState()
+          s.setBusinesses(merged.businesses, merged.activeBusiness)
+          s.setSales(merged.sales)
+          s.setExpenseMonths(merged.expenseMonths)
+          s.setExpenseOthers(merged.expenseOthers)
+          s.setProducts(merged.products)
+        }
+      )
+      setRestoreMessage('Data restored successfully!')
+    } catch (err) {
+      setRestoreMessage('Failed to restore. Please try again.')
+      console.error(err)
+    } finally {
+      setRestoring(false)
+      setTimeout(() => setRestoreMessage(null), 3000)
+    }
   }
 
   return (
@@ -497,6 +535,34 @@ export default function ProfilePage() {
           >
             Sign in to save your data
           </button>
+        )}
+        {!isGuest && (
+          <div>
+            <button
+              onClick={handleRestoreFromCloud}
+              disabled={restoring}
+              className="w-full rounded-2xl bg-gradient-to-r from-floin-purple to-floin-purple-dark py-4 text-sm font-semibold text-white shadow-md shadow-floin-purple/20 transition-all hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
+            >
+              {restoring ? (
+                <span className="flex items-center justify-center gap-2">
+                  <svg className="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Restoring...
+                </span>
+              ) : (
+                'Restore from cloud'
+              )}
+            </button>
+            {restoreMessage && (
+              <p className={`mt-2 text-center text-xs font-medium ${
+                restoreMessage.includes('success') ? 'text-floin-green-dark' : 'text-floin-red'
+              }`}>
+                {restoreMessage}
+              </p>
+            )}
+          </div>
         )}
         <button
           onClick={handleLogout}
