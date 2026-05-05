@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import { useStore } from '@/store'
 import { EXPENSE_CATEGORIES } from '@/lib/constants'
 import { getCurrentMonthYear, generateId } from '@/lib/utils'
 import { MonthNavigator } from '@/components/ui/MonthNavigator'
+import { useCloudSync } from '@/hooks/useCloudSync'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { ExpenseMonth, ExpenseOther } from '@/lib/supabase/types'
 
@@ -17,7 +17,7 @@ export default function ExpensesPage() {
     upsertExpenseMonth,
     addExpenseOther,
     deleteExpenseOther,
-  } = useStore()
+  } = useCloudSync()
   const { symbol, format } = useCurrency()
 
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthYear())

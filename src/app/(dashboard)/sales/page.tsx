@@ -1,15 +1,15 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { useStore } from '@/store'
 import { SALES_CHANNELS } from '@/lib/constants'
+import { useCloudSync } from '@/hooks/useCloudSync'
 import { useCurrency } from '@/hooks/useCurrency'
 import { formatDate, generateId, getTodayDate, getCurrentMonthYear } from '@/lib/utils'
 import { MonthNavigator } from '@/components/ui/MonthNavigator'
 import type { SalesEntry } from '@/lib/supabase/types'
 
 export default function SalesPage() {
-  const { sales, business, products, addSale, deleteSale, updateSale } = useStore()
+  const { sales, business, products, addSale, deleteSale, updateSale } = useCloudSync()
   const { symbol, format } = useCurrency()
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)

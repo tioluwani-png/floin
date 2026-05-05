@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/store'
+import { useCloudSync } from '@/hooks/useCloudSync'
 import { signOut } from '@/lib/supabase/auth'
 import { restoreAndMerge } from '@/lib/supabase/restore'
 import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCIES, getCurrency } from '@/lib/constants'
@@ -18,7 +19,7 @@ export default function ProfilePage() {
     products, addProduct, deleteProduct,
     setOnboardingComplete, setUser, setGuest,
     setSales, setExpenseMonths, setExpenseOthers, setProducts,
-  } = useStore()
+  } = useCloudSync()
 
   const [name, setName] = useState(business?.name || '')
   const [type, setType] = useState(business?.type || 'product')
