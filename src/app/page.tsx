@@ -1,28 +1,22 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/store'
 
 export default function Home() {
   const router = useRouter()
   const { onboardingComplete } = useStore()
-  const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    // Wait a tick for Zustand to hydrate from localStorage
-    const timeout = setTimeout(() => setReady(true), 100)
-    return () => clearTimeout(timeout)
-  }, [])
-
-  useEffect(() => {
-    if (!ready) return
+    // StoreHydration ensures Zustand is fully hydrated before this renders,
+    // so onboardingComplete reflects the real persisted value
     if (onboardingComplete) {
       router.replace('/sales')
     } else {
       router.replace('/login')
     }
-  }, [ready, onboardingComplete, router])
+  }, [onboardingComplete, router])
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
