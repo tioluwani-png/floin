@@ -2,34 +2,39 @@ import { supabase } from './client'
 import { useStore } from '@/store'
 
 /**
- * Migrates any local data created under 'guest' user_id to the real
- * signed-in user_id, then pushes it all to Supabase.
+ * Ensures ALL local data is pushed to Supabase under the real user_id.
  *
- * This handles two cases:
- * 1. User tried guest mode → added data → then signed in with Google
- * 2. Cloud sync previously failed silently (e.g. bad env config)
+ * Handles three cases:
+ * 1. Guest data (user_id='guest') → retag and push
+ * 2. Data with correct user_id that never reached Supabase (e.g. sync failed)
+ * 3. Data already in cloud → upsert is a safe no-op
  *
- * Uses upsert so it's safe to call repeatedly — duplicates are ignored.
+ * Uses upsert so it's safe to call on every sign-in.
  */
-export async function migrateGuestData(userId: string) {
+export async function ensureLocalDataInCloud(userId: string) {
   if (!supabase) return
 
   const state = useStore.getState()
-  const guestBusinesses = state.businesses.filter(b => b.user_id === 'guest')
 
-  if (guestBusinesses.length === 0) return
+  if (state.businesses.length === 0) return
 
-  // 1. Update local state — retag guest businesses with real user_id
-  const updatedBusinesses = state.businesses.map(b =>
-    b.user_id === 'guest' ? { ...b, user_id: userId } : b
-  )
-  const activeBusiness = state.business && state.business.user_id === 'guest'
-    ? { ...state.business, user_id: userId }
-    : state.business
-  state.setBusinesses(updatedBusinesses, activeBusiness)
+  // 1. Retag any guest businesses locally
+  const hasGuestData = state.businesses.some(b => b.user_id === 'guest')
+  if (hasGuestData) {
+    const updatedBusinesses = state.businesses.map(b =>
+      b.user_id === 'guest' ? { ...b, user_id: userId } : b
+    )
+    const activeBusiness = state.business && state.business.user_id === 'guest'
+      ? { ...state.business, user_id: userId }
+      : state.business
+    state.setBusinesses(updatedBusinesses, activeBusiness)
+  }
 
-  // 2. Push each migrated business and its child records to Supabase
-  for (const biz of guestBusinesses) {
+  // 2. Push ALL local businesses and child records to Supabase
+  //    (re-read state after potential guest migration above)
+  const current = useStore.getState()
+
+  for (const biz of current.businesses) {
     try {
       await supabase.from('businesses').upsert({
         id: biz.id, user_id: userId, name: biz.name, type: biz.type,
@@ -37,7 +42,7 @@ export async function migrateGuestData(userId: string) {
         logo_base64: biz.logo_base64, created_at: biz.created_at,
       } as never)
 
-      const sales = state.sales.filter(s => s.business_id === biz.id)
+      const sales = current.sales.filter(s => s.business_id === biz.id)
       if (sales.length > 0) {
         await supabase.from('sales_entries').upsert(
           sales.map(s => ({
@@ -48,7 +53,7 @@ export async function migrateGuestData(userId: string) {
         )
       }
 
-      const expenses = state.expenseMonths.filter(e => e.business_id === biz.id)
+      const expenses = current.expenseMonths.filter(e => e.business_id === biz.id)
       if (expenses.length > 0) {
         await supabase.from('expense_months').upsert(
           expenses.map(e => ({
@@ -61,7 +66,7 @@ export async function migrateGuestData(userId: string) {
       }
 
       const expenseIds = new Set(expenses.map(e => e.id))
-      const others = state.expenseOthers.filter(o => expenseIds.has(o.expense_month_id))
+      const others = current.expenseOthers.filter(o => expenseIds.has(o.expense_month_id))
       if (others.length > 0) {
         await supabase.from('expense_others').upsert(
           others.map(o => ({
@@ -71,7 +76,7 @@ export async function migrateGuestData(userId: string) {
         )
       }
 
-      const products = state.products.filter(p => p.business_id === biz.id)
+      const products = current.products.filter(p => p.business_id === biz.id)
       if (products.length > 0) {
         await supabase.from('products').upsert(
           products.map(p => ({
@@ -81,7 +86,7 @@ export async function migrateGuestData(userId: string) {
         )
       }
     } catch (err) {
-      console.error('Guest data migration failed for business:', biz.id, err)
+      console.error('Failed to push local data to cloud for business:', biz.id, err)
     }
   }
 }

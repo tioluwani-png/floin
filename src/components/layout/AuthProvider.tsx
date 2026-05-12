@@ -4,7 +4,7 @@ import { useEffect } from 'react'
 import { useStore } from '@/store'
 import { supabase } from '@/lib/supabase/client'
 import { restoreAndMerge } from '@/lib/supabase/restore'
-import { migrateGuestData } from '@/lib/supabase/migrate'
+import { ensureLocalDataInCloud } from '@/lib/supabase/migrate'
 
 function syncFromCloud(userId: string) {
   const state = useStore.getState()
@@ -35,7 +35,7 @@ function syncFromCloud(userId: string) {
 }
 
 function handleSignIn(userId: string) {
-  migrateGuestData(userId)
+  ensureLocalDataInCloud(userId)
     .then(() => syncFromCloud(userId))
     .catch((err) => {
       console.error('Migration failed, syncing anyway:', err)
