@@ -25,6 +25,7 @@ function syncFromCloud(userId: string) {
       s.setExpenseMonths(merged.expenseMonths)
       s.setExpenseOthers(merged.expenseOthers)
       s.setProducts(merged.products)
+      s.setMemberRoles(merged.memberRoles)
       if (merged.businesses.length > 0) {
         s.setOnboardingComplete(true)
       }

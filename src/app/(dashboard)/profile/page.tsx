@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '@/store'
 import { useCloudSync } from '@/hooks/useCloudSync'
@@ -9,7 +9,14 @@ import { restoreAndMerge } from '@/lib/supabase/restore'
 import { SALES_CHANNELS, BUSINESS_TYPES, CURRENCIES, getCurrency } from '@/lib/constants'
 import { generateId } from '@/lib/utils'
 import { compressImage } from '@/lib/imageUtils'
-import type { Business, Product } from '@/lib/supabase/types'
+import {
+  createInvite,
+  fetchActiveInvite,
+  revokeInvite,
+  fetchBusinessMembers,
+  removeBusinessMember,
+} from '@/lib/supabase/teams'
+import type { Business, Product, BusinessMember, BusinessInvite } from '@/lib/supabase/types'
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -20,6 +27,7 @@ export default function ProfilePage() {
     setUser, setGuest,
     setSales, setExpenseMonths, setExpenseOthers, setProducts,
   } = useCloudSync()
+  const { memberRoles, setMemberRoles } = useStore()
 
   const [name, setName] = useState(business?.name || '')
   const [type, setType] = useState(business?.type || 'product')
@@ -35,6 +43,45 @@ export default function ProfilePage() {
   const [newBizCurrency, setNewBizCurrency] = useState('NGN')
   const [restoring, setRestoring] = useState(false)
   const [restoreMessage, setRestoreMessage] = useState<string | null>(null)
+
+  // Team state
+  const [members, setMembers] = useState<BusinessMember[]>([])
+  const [activeInvite, setActiveInvite] = useState<BusinessInvite | null>(null)
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null)
+  const [leavingBusiness, setLeavingBusiness] = useState(false)
+
+  const isOwner = business ? (business.user_id === user?.id || memberRoles[business.id] === 'owner') : false
+  const isMember = business ? memberRoles[business.id] === 'member' : false
+
+  // Load team members and invite when business changes
+  useEffect(() => {
+    if (!business || isGuest || !user) {
+      setMembers([])
+      setActiveInvite(null)
+      return
+    }
+
+    let cancelled = false
+
+    async function loadTeamData() {
+      try {
+        const [memberList, invite] = await Promise.all([
+          fetchBusinessMembers(business!.id),
+          isOwner ? fetchActiveInvite(business!.id) : Promise.resolve(null),
+        ])
+        if (cancelled) return
+        setMembers(memberList)
+        setActiveInvite(invite)
+      } catch (err) {
+        console.error('Failed to load team data:', err)
+      }
+    }
+
+    loadTeamData()
+    return () => { cancelled = true }
+  }, [business?.id, isGuest, user, isOwner])
 
   const businessProducts = products.filter(p => p.business_id === business?.id)
   const activeCurrency = getCurrency(business?.currency)
@@ -152,6 +199,7 @@ export default function ProfilePage() {
           s.setExpenseMonths(merged.expenseMonths)
           s.setExpenseOthers(merged.expenseOthers)
           s.setProducts(merged.products)
+          s.setMemberRoles(merged.memberRoles)
         }
       )
       setRestoreMessage('Data restored successfully!')
@@ -161,6 +209,73 @@ export default function ProfilePage() {
     } finally {
       setRestoring(false)
       setTimeout(() => setRestoreMessage(null), 3000)
+    }
+  }
+
+  async function handleGenerateInvite() {
+    if (!business || !user) return
+    setInviteLoading(true)
+    try {
+      const invite = await createInvite(business.id, user.id)
+      setActiveInvite(invite)
+    } catch (err) {
+      console.error('Failed to create invite:', err)
+    } finally {
+      setInviteLoading(false)
+    }
+  }
+
+  async function handleCopyInvite() {
+    if (!activeInvite) return
+    const url = `${window.location.origin}/invite/${activeInvite.token}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback: select text
+    }
+  }
+
+  async function handleRevokeInvite() {
+    if (!activeInvite) return
+    try {
+      await revokeInvite(activeInvite.id)
+      setActiveInvite(null)
+    } catch (err) {
+      console.error('Failed to revoke invite:', err)
+    }
+  }
+
+  async function handleRemoveMember(memberId: string) {
+    setRemovingMemberId(memberId)
+    try {
+      await removeBusinessMember(memberId)
+      setMembers(prev => prev.filter(m => m.id !== memberId))
+    } catch (err) {
+      console.error('Failed to remove member:', err)
+    } finally {
+      setRemovingMemberId(null)
+    }
+  }
+
+  async function handleLeaveBusiness() {
+    if (!business || !user) return
+    setLeavingBusiness(true)
+    try {
+      const myMembership = members.find(m => m.user_id === user.id)
+      if (myMembership) {
+        await removeBusinessMember(myMembership.id)
+      }
+      // Remove from local store
+      const updatedRoles = { ...memberRoles }
+      delete updatedRoles[business.id]
+      setMemberRoles(updatedRoles)
+      removeBusiness(business.id)
+    } catch (err) {
+      console.error('Failed to leave business:', err)
+    } finally {
+      setLeavingBusiness(false)
     }
   }
 
@@ -249,6 +364,11 @@ export default function ProfilePage() {
                 {biz.id === business?.id && (
                   <span className="shrink-0 rounded-full bg-floin-green px-2 py-0.5 text-[10px] font-bold text-white">
                     Active
+                  </span>
+                )}
+                {memberRoles[biz.id] === 'member' && biz.id !== business?.id && (
+                  <span className="shrink-0 rounded-full bg-floin-purple-light px-2 py-0.5 text-[10px] font-bold text-floin-purple">
+                    Shared
                   </span>
                 )}
                 {businesses.length > 1 && biz.id !== business?.id && (
@@ -463,6 +583,141 @@ export default function ProfilePage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Team section */}
+      {business && !isGuest && user && (
+        <div className="mt-4 rounded-2xl bg-white p-5 shadow-sm border border-border/40">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-muted">Team</h3>
+            {memberRoles[business.id] === 'member' && (
+              <span className="rounded-full bg-floin-purple-light px-2 py-0.5 text-[10px] font-bold text-floin-purple">
+                Shared with you
+              </span>
+            )}
+          </div>
+
+          {isOwner && (
+            <>
+              {/* Invite link */}
+              <div className="mt-3">
+                {activeInvite ? (
+                  <div className="rounded-xl bg-background p-3 space-y-2">
+                    <p className="text-xs font-medium text-muted-dark">Invite link</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={`${typeof window !== 'undefined' ? window.location.origin : ''}/invite/${activeInvite.token}`}
+                        className="flex-1 rounded-lg bg-white px-3 py-2 text-xs text-muted-dark ring-1 ring-border truncate"
+                      />
+                      <button
+                        onClick={handleCopyInvite}
+                        className="shrink-0 rounded-lg bg-floin-green-light px-3 py-2 text-xs font-semibold text-floin-green-dark transition-colors hover:bg-floin-green/20"
+                      >
+                        {copied ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleRevokeInvite}
+                      className="text-xs font-medium text-muted hover:text-floin-red transition-colors"
+                    >
+                      Revoke link
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleGenerateInvite}
+                    disabled={inviteLoading}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-floin-green-light px-4 py-3 text-xs font-semibold text-floin-green-dark transition-colors hover:bg-floin-green/20 disabled:opacity-50"
+                  >
+                    {inviteLoading ? (
+                      <>
+                        <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-5.497a4.5 4.5 0 00-6.364 0l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+                        </svg>
+                        Generate invite link
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {/* Member list */}
+              <div className="mt-4">
+                <p className="text-xs font-medium text-muted-dark">Members ({members.length + 1})</p>
+                <div className="mt-2 space-y-1.5">
+                  {/* Owner (always first) */}
+                  <div className="flex items-center gap-3 rounded-xl bg-background p-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-floin-green to-floin-green-dark">
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+                      ) : (
+                        <span className="text-xs font-bold text-white">{(user.name || 'O')[0].toUpperCase()}</span>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{user.name} (you)</p>
+                      <p className="text-[10px] text-muted truncate">{user.email}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-floin-green-light px-2 py-0.5 text-[10px] font-bold text-floin-green-dark">
+                      Owner
+                    </span>
+                  </div>
+
+                  {/* Team members */}
+                  {members.map((member) => (
+                    <div key={member.id} className="flex items-center gap-3 rounded-xl bg-background p-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-floin-purple-light">
+                        {member.user_avatar_url ? (
+                          <img src={member.user_avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+                        ) : (
+                          <span className="text-xs font-bold text-floin-purple">{(member.user_name || 'M')[0].toUpperCase()}</span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{member.user_name || 'Team member'}</p>
+                        <p className="text-[10px] text-muted truncate">{member.user_email || ''}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveMember(member.id)}
+                        disabled={removingMemberId === member.id}
+                        className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:text-floin-red hover:bg-floin-red-light transition-all disabled:opacity-50"
+                      >
+                        {removingMemberId === member.id ? '...' : 'Remove'}
+                      </button>
+                    </div>
+                  ))}
+
+                  {members.length === 0 && (
+                    <p className="text-xs text-muted py-1">No team members yet. Share the invite link to add people.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {isMember && (
+            <div className="mt-3">
+              <p className="text-xs text-muted">You have full access to this business&apos;s data.</p>
+              <button
+                onClick={handleLeaveBusiness}
+                disabled={leavingBusiness}
+                className="mt-3 w-full rounded-xl border-2 border-floin-red/20 py-2.5 text-xs font-semibold text-floin-red transition-all hover:bg-floin-red-light hover:border-floin-red/40 active:scale-[0.98] disabled:opacity-50"
+              >
+                {leavingBusiness ? 'Leaving...' : 'Leave business'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

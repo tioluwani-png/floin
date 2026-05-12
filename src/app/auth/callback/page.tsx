@@ -68,6 +68,14 @@ export default function AuthCallbackPage() {
           })
           setGuest(false)
 
+          // Check for a pending invite token (set before OAuth redirect)
+          const pendingToken = sessionStorage.getItem('pending-invite-token')
+          if (pendingToken) {
+            sessionStorage.removeItem('pending-invite-token')
+            router.replace(`/invite/${pendingToken}`)
+            return
+          }
+
           // Migrate any guest data to this user's account first
           await ensureLocalDataInCloud(session.user.id).catch(() => {})
 
@@ -100,6 +108,7 @@ export default function AuthCallbackPage() {
                 s.setExpenseMonths(merged.expenseMonths)
                 s.setExpenseOthers(merged.expenseOthers)
                 s.setProducts(merged.products)
+                s.setMemberRoles(merged.memberRoles)
               }
             )
             const updated = useStore.getState()

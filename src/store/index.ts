@@ -48,6 +48,10 @@ interface FloinState {
   addProduct: (product: Product) => void
   deleteProduct: (id: string) => void
 
+  // Team
+  memberRoles: Record<string, 'owner' | 'member'>
+  setMemberRoles: (roles: Record<string, 'owner' | 'member'>) => void
+
   // Onboarding
   onboardingComplete: boolean
   setOnboardingComplete: (complete: boolean) => void
@@ -140,6 +144,10 @@ export const useStore = create<FloinState>()(
         set((state) => ({ products: [...state.products, product] })),
       deleteProduct: (id) =>
         set((state) => ({ products: state.products.filter((p) => p.id !== id) })),
+
+      // Team
+      memberRoles: {},
+      setMemberRoles: (memberRoles) => set({ memberRoles }),
 
       // Onboarding
       onboardingComplete: false,

@@ -35,6 +35,9 @@ export async function ensureLocalDataInCloud(userId: string) {
   const current = useStore.getState()
 
   for (const biz of current.businesses) {
+    // Skip businesses we don't own — they're shared with us
+    if (biz.user_id !== userId && biz.user_id !== 'guest') continue
+
     try {
       await supabase.from('businesses').upsert({
         id: biz.id, user_id: userId, name: biz.name, type: biz.type,

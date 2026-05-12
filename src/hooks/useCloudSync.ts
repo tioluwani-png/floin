@@ -31,6 +31,12 @@ export function useCloudSync() {
     const biz = state.businesses.find((b) => b.id === businessId)
     if (!biz) return
 
+    // Shared business (owned by someone else) — already exists in cloud
+    if (biz.user_id !== user!.id) {
+      syncedBusinesses.current.add(businessId)
+      return
+    }
+
     // Try to fetch it first
     const existing = await db.fetchBusiness(user!.id)
     if (existing && existing.id === businessId) {

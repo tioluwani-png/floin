@@ -152,6 +152,64 @@ export type Database = {
           created_at?: string
         }
       }
+      business_members: {
+        Row: {
+          id: string
+          business_id: string
+          user_id: string
+          role: 'owner' | 'member'
+          user_email: string | null
+          user_name: string | null
+          user_avatar_url: string | null
+          joined_at: string
+        }
+        Insert: {
+          id?: string
+          business_id: string
+          user_id: string
+          role?: 'owner' | 'member'
+          user_email?: string | null
+          user_name?: string | null
+          user_avatar_url?: string | null
+          joined_at?: string
+        }
+        Update: {
+          id?: string
+          business_id?: string
+          user_id?: string
+          role?: 'owner' | 'member'
+          user_email?: string | null
+          user_name?: string | null
+          user_avatar_url?: string | null
+          joined_at?: string
+        }
+      }
+      business_invites: {
+        Row: {
+          id: string
+          business_id: string
+          token: string
+          created_by: string
+          created_at: string
+          is_active: boolean
+        }
+        Insert: {
+          id?: string
+          business_id: string
+          token: string
+          created_by: string
+          created_at?: string
+          is_active?: boolean
+        }
+        Update: {
+          id?: string
+          business_id?: string
+          token?: string
+          created_by?: string
+          created_at?: string
+          is_active?: boolean
+        }
+      }
     }
   }
 }
@@ -162,3 +220,5 @@ export type SalesEntry = Database['public']['Tables']['sales_entries']['Row']
 export type ExpenseMonth = Database['public']['Tables']['expense_months']['Row']
 export type ExpenseOther = Database['public']['Tables']['expense_others']['Row']
 export type Product = Database['public']['Tables']['products']['Row']
+export type BusinessMember = Database['public']['Tables']['business_members']['Row']
+export type BusinessInvite = Database['public']['Tables']['business_invites']['Row']

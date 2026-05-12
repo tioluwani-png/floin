@@ -5,6 +5,7 @@ import {
   fetchExpenseOthers,
   fetchProducts,
 } from './db'
+import { fetchMemberships, fetchBusinessesByIds } from './teams'
 import { supabase } from './client'
 import type { Business, SalesEntry, ExpenseMonth, ExpenseOther, Product } from './types'
 
@@ -17,14 +18,34 @@ function mergeById<T extends { id: string }>(local: T[], cloud: T[]): T[] {
 export async function restoreFromCloud(userId: string) {
   if (!supabase) throw new Error('Supabase not configured')
 
-  const cloudBusinesses = await fetchBusinesses(userId)
+  // Fetch owned businesses
+  const ownedBusinesses = await fetchBusinesses(userId)
+
+  // Fetch shared businesses (where user is a member)
+  const memberships = await fetchMemberships(userId)
+  const sharedBusinessIds = memberships
+    .map((m) => m.business_id)
+    .filter((id) => !ownedBusinesses.some((b) => b.id === id))
+  const sharedBusinesses = await fetchBusinessesByIds(sharedBusinessIds)
+
+  // Combine owned + shared
+  const allBusinesses = [...ownedBusinesses, ...sharedBusinesses]
+
+  // Build memberRoles map
+  const memberRoles: Record<string, 'owner' | 'member'> = {}
+  for (const biz of ownedBusinesses) {
+    memberRoles[biz.id] = 'owner'
+  }
+  for (const biz of sharedBusinesses) {
+    memberRoles[biz.id] = 'member'
+  }
 
   let allSales: SalesEntry[] = []
   let allExpenseMonths: ExpenseMonth[] = []
   let allExpenseOthers: ExpenseOther[] = []
   let allProducts: Product[] = []
 
-  for (const biz of cloudBusinesses) {
+  for (const biz of allBusinesses) {
     const [sales, expenseMonths, products] = await Promise.all([
       fetchSales(biz.id),
       fetchAllExpenseMonths(biz.id),
@@ -42,11 +63,12 @@ export async function restoreFromCloud(userId: string) {
   }
 
   return {
-    businesses: cloudBusinesses,
+    businesses: allBusinesses,
     sales: allSales,
     expenseMonths: allExpenseMonths,
     expenseOthers: allExpenseOthers,
     products: allProducts,
+    memberRoles,
   }
 }
 
@@ -67,6 +89,7 @@ export async function restoreAndMerge(
     expenseMonths: ExpenseMonth[]
     expenseOthers: ExpenseOther[]
     products: Product[]
+    memberRoles: Record<string, 'owner' | 'member'>
   }) => void
 ): Promise<void> {
   const cloud = await restoreFromCloud(userId)
@@ -89,5 +112,6 @@ export async function restoreAndMerge(
     expenseMonths: mergedExpenseMonths,
     expenseOthers: mergedExpenseOthers,
     products: mergedProducts,
+    memberRoles: cloud.memberRoles,
   })
 }
