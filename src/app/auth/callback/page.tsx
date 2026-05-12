@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { useStore } from '@/store'
@@ -9,10 +9,14 @@ import { ensureLocalDataInCloud } from '@/lib/supabase/migrate'
 
 export default function AuthCallbackPage() {
   const router = useRouter()
-  const { setUser, setGuest, onboardingComplete } = useStore()
   const [error, setError] = useState<string | null>(null)
+  const handled = useRef(false)
 
   useEffect(() => {
+    // Guard: only run once — PKCE codes are single-use
+    if (handled.current) return
+    handled.current = true
+
     async function handleCallback() {
       if (!supabase) {
         setError('Supabase not configured')
@@ -55,6 +59,7 @@ export default function AuthCallbackPage() {
         }
 
         if (session?.user) {
+          const { setUser, setGuest } = useStore.getState()
           setUser({
             id: session.user.id,
             email: session.user.email || '',
@@ -65,6 +70,9 @@ export default function AuthCallbackPage() {
 
           // Migrate any guest data to this user's account first
           await ensureLocalDataInCloud(session.user.id).catch(() => {})
+
+          // Read onboardingComplete from store directly (not reactive hook)
+          const { onboardingComplete } = useStore.getState()
 
           // If onboarding already done (same device), go straight to dashboard
           if (onboardingComplete) {
@@ -118,7 +126,7 @@ export default function AuthCallbackPage() {
     }
 
     handleCallback()
-  }, [router, setUser, setGuest, onboardingComplete])
+  }, [router])
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
