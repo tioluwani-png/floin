@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useStore } from '@/store'
 import { supabase } from '@/lib/supabase/client'
 import { restoreAndMerge } from '@/lib/supabase/restore'
+import { migrateGuestData } from '@/lib/supabase/migrate'
 
 function syncFromCloud(userId: string) {
   const state = useStore.getState()
@@ -33,6 +34,15 @@ function syncFromCloud(userId: string) {
   })
 }
 
+function handleSignIn(userId: string) {
+  migrateGuestData(userId)
+    .then(() => syncFromCloud(userId))
+    .catch((err) => {
+      console.error('Migration failed, syncing anyway:', err)
+      syncFromCloud(userId)
+    })
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { setUser, setGuest } = useStore()
 
@@ -49,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           avatar_url: session.user.user_metadata?.avatar_url,
         })
         setGuest(false)
-        syncFromCloud(session.user.id)
+        handleSignIn(session.user.id)
       }
     })
 
@@ -64,7 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             avatar_url: session.user.user_metadata?.avatar_url,
           })
           setGuest(false)
-          syncFromCloud(session.user.id)
+          handleSignIn(session.user.id)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
           setGuest(true)

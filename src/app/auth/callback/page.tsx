@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { useStore } from '@/store'
 import { restoreAndMerge } from '@/lib/supabase/restore'
+import { migrateGuestData } from '@/lib/supabase/migrate'
 
 export default function AuthCallbackPage() {
   const router = useRouter()
@@ -61,6 +62,9 @@ export default function AuthCallbackPage() {
             avatar_url: session.user.user_metadata?.avatar_url,
           })
           setGuest(false)
+
+          // Migrate any guest data to this user's account first
+          await migrateGuestData(session.user.id).catch(() => {})
 
           // If onboarding already done (same device), go straight to dashboard
           if (onboardingComplete) {
