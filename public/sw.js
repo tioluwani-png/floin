@@ -1,4 +1,4 @@
-const CACHE_NAME = 'floin-v5'
+const CACHE_NAME = 'floin-v6'
 const STATIC_ASSETS = [
   '/',
   '/sales',
