@@ -121,6 +121,12 @@ export default function InvitePage() {
     }
   }
 
+  function getErrorMessage(err: unknown): string {
+    if (err instanceof Error) return err.message
+    if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message)
+    return JSON.stringify(err)
+  }
+
   async function handleJoin() {
     if (!user || !invite || !supabase) return
     setStatus('joining')
@@ -134,18 +140,31 @@ export default function InvitePage() {
         return
       }
 
-      // Insert membership
-      await addBusinessMember({
+      // Step 1: Insert membership
+      const memberData = {
         id: crypto.randomUUID(),
         business_id: invite.business_id,
-        user_id: user.id,
-        role: 'member',
+        user_id: session.user.id,
+        role: 'member' as const,
         user_email: user.email || null,
         user_name: user.name || null,
         user_avatar_url: user.avatar_url || null,
-      })
+      }
 
-      // Fetch the business now that we have member access
+      const { error: memberError } = await supabase
+        .from('business_members')
+        .insert(memberData as never)
+        .select()
+        .single()
+
+      if (memberError) {
+        console.error('Step 1 failed - insert member:', memberError)
+        setStatus('error')
+        setErrorMessage(`Could not join: ${memberError.message}`)
+        return
+      }
+
+      // Step 2: Fetch the business now that we have member access
       const { data, error: bizError } = await supabase
         .from('businesses')
         .select('*')
@@ -153,43 +172,42 @@ export default function InvitePage() {
         .single()
 
       if (bizError) {
-        console.error('Failed to fetch business after joining:', bizError)
+        console.error('Step 2 failed - fetch business:', bizError)
       }
 
       const biz = data as unknown as Business | null
 
       if (biz) {
         const store = useStore.getState()
-
-        // Add business to local store
         store.addBusiness(biz)
-
-        // Update memberRoles
         store.setMemberRoles({
           ...store.memberRoles,
           [biz.id]: 'member',
         })
 
-        // Fetch and merge child data
-        const [sales, expenseMonths, products] = await Promise.all([
-          fetchSales(biz.id),
-          fetchAllExpenseMonths(biz.id),
-          fetchProducts(biz.id),
-        ])
+        // Step 3: Fetch child data (non-critical — don't fail the join)
+        try {
+          const [sales, expenseMonths, products] = await Promise.all([
+            fetchSales(biz.id),
+            fetchAllExpenseMonths(biz.id),
+            fetchProducts(biz.id),
+          ])
 
-        store.setSales([...store.sales, ...sales])
-        store.setExpenseMonths([...store.expenseMonths, ...expenseMonths])
-        store.setProducts([...store.products, ...products])
+          store.setSales([...store.sales, ...sales])
+          store.setExpenseMonths([...store.expenseMonths, ...expenseMonths])
+          store.setProducts([...store.products, ...products])
 
-        // Fetch expense others
-        if (expenseMonths.length > 0) {
-          const othersArrays = await Promise.all(
-            expenseMonths.map(em => fetchExpenseOthers(em.id))
-          )
-          const allOthers = othersArrays.flat()
-          if (allOthers.length > 0) {
-            store.setExpenseOthers([...store.expenseOthers, ...allOthers])
+          if (expenseMonths.length > 0) {
+            const othersArrays = await Promise.all(
+              expenseMonths.map(em => fetchExpenseOthers(em.id))
+            )
+            const allOthers = othersArrays.flat()
+            if (allOthers.length > 0) {
+              store.setExpenseOthers([...store.expenseOthers, ...allOthers])
+            }
           }
+        } catch (dataErr) {
+          console.error('Step 3 - fetch child data failed (non-critical):', dataErr)
         }
 
         store.setOnboardingComplete(true)
@@ -199,9 +217,8 @@ export default function InvitePage() {
       setTimeout(() => router.replace('/sales'), 1000)
     } catch (err: unknown) {
       console.error('Failed to join business:', err)
-      const message = err instanceof Error ? err.message : 'Unknown error'
       setStatus('error')
-      setErrorMessage(`Failed to join: ${message}`)
+      setErrorMessage(`Failed to join: ${getErrorMessage(err)}`)
     }
   }
 
