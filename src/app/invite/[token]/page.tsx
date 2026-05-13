@@ -20,6 +20,12 @@ import type { Business, BusinessInvite } from '@/lib/supabase/types'
 
 type Status = 'loading' | 'needs-auth' | 'ready' | 'joining' | 'done' | 'error' | 'already-member' | 'is-owner'
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message)
+  return JSON.stringify(err)
+}
+
 export default function InvitePage() {
   const { token } = useParams<{ token: string }>()
   const router = useRouter()
@@ -103,7 +109,7 @@ export default function InvitePage() {
         console.error('Failed to load invite:', err)
         if (!cancelled) {
           setStatus('error')
-          setErrorMessage('Failed to load invite. Please try again.')
+          setErrorMessage(`Failed to load invite: ${getErrorMessage(err)}`)
         }
       }
     }
@@ -119,12 +125,6 @@ export default function InvitePage() {
     } catch (err) {
       console.error('Sign in failed:', err)
     }
-  }
-
-  function getErrorMessage(err: unknown): string {
-    if (err instanceof Error) return err.message
-    if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message)
-    return JSON.stringify(err)
   }
 
   async function handleJoin() {

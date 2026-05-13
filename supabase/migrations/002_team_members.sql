@@ -118,10 +118,13 @@ create policy "Users can manage products for accessible businesses"
 -- ============================================================
 
 -- Members can see other members of businesses they belong to
+-- NOTE: Do NOT use accessible_business_ids() here — it queries business_members,
+-- which would cause infinite recursion in the RLS policy evaluation.
 create policy "Members can view members of their businesses"
   on business_members for select
   using (
-    business_id in (select accessible_business_ids())
+    business_id in (select id from businesses where user_id = auth.uid()::text)
+    or user_id = auth.uid()::text
   );
 
 -- Owners can add members, or users can add themselves (accepting invite)
