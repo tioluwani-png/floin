@@ -251,8 +251,28 @@ async function commitDebtPayment(
   try {
     const intent = pending.intent_data
 
-    if (!intent.customer_name) {
+    if (!intent.party) {  // party instead of customer_name
       return { success: false, error: 'Customer name required for debt payment' }
+    }
+
+    // Calculate payment amount from items or top-level
+    const paymentKobo = intent.items && intent.items.length > 0
+      ? intent.items.reduce((sum: number, item: any) => {
+          if (!item.amount_kobo) return sum
+          return sum + item.amount_kobo
+        }, 0)
+      : (intent.amount_kobo || 0)
+
+    // Convert time_ref to date
+    const getDateString = (timeRef: string | null): string => {
+      const today = new Date()
+      if (!timeRef || timeRef === 'today') return today.toISOString().split('T')[0]
+      if (timeRef === 'yesterday') {
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+        return yesterday.toISOString().split('T')[0]
+      }
+      return today.toISOString().split('T')[0]
     }
 
     // Find outstanding debt for this customer
@@ -260,7 +280,7 @@ async function commitDebtPayment(
       .from('whatsapp_debts')
       .select('*')
       .eq('business_id', pending.business_id)
-      .eq('customer_name', intent.customer_name)
+      .eq('customer_name', intent.party)  // party instead of customer_name
       .in('status', ['outstanding', 'partial'])
       .order('sale_date', { ascending: true })
 
@@ -271,7 +291,6 @@ async function commitDebtPayment(
     // Apply payment to oldest debt first
     const debt = debts[0]
     const paymentId = generateId()
-    const paymentKobo = intent.amount_kobo
     const newBalance = debt.balance_kobo - paymentKobo
 
     // Record payment
@@ -281,7 +300,7 @@ async function commitDebtPayment(
         id: paymentId,
         debt_id: debt.id,
         amount_kobo: paymentKobo,
-        payment_date: intent.date,
+        payment_date: getDateString(intent.time_ref),
         note: intent.note,
         created_at: new Date().toISOString()
       })
