@@ -305,6 +305,20 @@ async function handleConfirmationReply(
     return
   }
 
+  // Check if message looks like a new sale (not a yes/no response)
+  const saleKeywords = ['sold', 'sell', 'package', 'bag', 'bottle', 'piece', 'item', 'naira', 'kobo', 'also']
+  const looksLikeSale = saleKeywords.some(keyword => normalized.includes(keyword)) || /\d/.test(message)
+
+  if (looksLikeSale) {
+    // User is trying to log a new sale while there's a pending confirmation
+    await sendMessage(
+      waUser.wa_phone,
+      `⚠️ You have a pending sale to confirm first!\n\n` +
+      `Reply "Yes" to save it, or "Cancel" to discard and log the new sale.`
+    )
+    return
+  }
+
   // Ambiguous response - re-prompt
   await sendMessage(
     waUser.wa_phone,
