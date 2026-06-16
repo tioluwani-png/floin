@@ -425,8 +425,7 @@ export async function generateMonthlyReportPDF(
     }
 
     // Generate PDF
-    const doc = React.createElement(MonthlyReportPDF, { data })
-    const pdfBlob = await pdf(doc).toBlob()
+    const pdfBlob = await pdf(<MonthlyReportPDF data={data} />).toBlob()
     const buffer = Buffer.from(await pdfBlob.arrayBuffer())
 
     console.log(`✅ PDF generated: ${buffer.length} bytes`)

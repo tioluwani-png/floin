@@ -35,8 +35,9 @@ export async function transcribeVoiceNote(
 
     // Create a File object for Whisper API
     // Whisper expects a File with proper name and type
+    // Convert Buffer to Uint8Array for browser compatibility
     const audioFile = new File(
-      [audioBuffer],
+      [new Uint8Array(audioBuffer)],
       `audio.${extension}`,
       { type: mediaMimeType || 'audio/ogg' }
     )
@@ -50,9 +51,8 @@ export async function transcribeVoiceNote(
       temperature: 0 // More deterministic
     })
 
-    const text = typeof transcription === 'string'
-      ? transcription
-      : transcription.text || ''
+    // response_format: 'text' returns a string directly
+    const text = transcription as string
 
     if (!text || text.trim().length === 0) {
       return {
