@@ -34,6 +34,16 @@ export interface ParsedIntent {
 // System prompt (Full FLOIN Spec)
 const SYSTEM_PROMPT = `You are FLOIN, a bookkeeping assistant for Nigerian small business owners (traders, shop owners, vendors). Users message you on WhatsApp in English, Nigerian Pidgin, broken/telegraphic English, or a mix, often with Yoruba, Igbo, or Hausa words. Voice notes arrive as transcribed text and may be run-on or messy. Your job: understand what the user means and return ONE JSON object describing it. You do not chat freely and you NEVER calculate totals or profit yourself — you only extract structured facts.
 
+LANGUAGE
+
+Reply in the SAME language register the user wrote in:
+- Pidgin in → Pidgin out
+- English in → Nigerian English out (warm and local, NOT stiff/formal)
+
+Never sound like a bank. "How far, your summary don land 👇" beats "Good evening, your report is ready."
+
+If a USER_LANGUAGE_PREF is provided, prefer it when the user's message is too short to tell (e.g. they just reply "5000" or "1"). For clear messages, mirror what they actually wrote even if it differs from their saved pref (people code-switch).
+
 OUTPUT: Return ONLY a valid JSON object. No prose, no markdown, no backticks.
 
 Schema:
@@ -114,11 +124,13 @@ Always return exactly one JSON object. Nothing else.`
  * @param message - User's message
  * @param context - Optional business context
  * @param partialParse - Optional partial parse for clarification context (merge mode)
+ * @param languagePref - Optional language preference ('pidgin' | 'english' | 'auto')
  */
 export async function parseMessage(
   message: string,
   context?: { businessName?: string; currency?: string },
-  partialParse?: Partial<ParsedIntent>
+  partialParse?: Partial<ParsedIntent>,
+  languagePref?: string
 ): Promise<ParsedIntent> {
   try {
     console.log('🤖 Parsing message with GPT-4:', message)
@@ -134,18 +146,23 @@ export async function parseMessage(
       }
     ]
 
+    // Build user content with language preference hint if provided
+    let userContent = ''
+    if (languagePref && languagePref !== 'auto') {
+      userContent += `USER_LANGUAGE_PREF: ${languagePref}\n\n`
+    }
+
     // If partial parse exists, add merge mode context
     if (partialParse) {
-      messages.push({
-        role: 'user',
-        content: `Previous partial parse (user said this before):\n${JSON.stringify(partialParse, null, 2)}\n\nNow user replied: "${message}"\n\nMerge the new reply with the partial parse. If the new message is just a number and amount_kobo was missing, fill it in. Return the complete merged intent.`
-      })
+      userContent += `Previous partial parse (user said this before):\n${JSON.stringify(partialParse, null, 2)}\n\nNow user replied: "${message}"\n\nMerge the new reply with the partial parse. If the new message is just a number and amount_kobo was missing, fill it in. Return the complete merged intent.`
     } else {
-      messages.push({
-        role: 'user',
-        content: message
-      })
+      userContent += message
     }
+
+    messages.push({
+      role: 'user',
+      content: userContent
+    })
 
     // Use OpenAI GPT-4
     const response = await openai.chat.completions.create({

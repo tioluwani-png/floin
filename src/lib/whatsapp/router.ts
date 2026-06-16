@@ -40,6 +40,7 @@ interface WhatsAppUser {
   user_id: string | null
   business_id: string | null
   preferred_language: string
+  language_pref: string  // 'pidgin' | 'english' | 'auto'
   onboarding_completed_at: string | null
   onboarding_state: string
   owner_name: string | null
@@ -386,7 +387,8 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Prom
         intent = await parseMessage(
           messageBody,
           { businessName: 'Business', currency: 'NGN' },
-          clarificationPending.partial_parse as Partial<ParsedIntent>
+          clarificationPending.partial_parse as Partial<ParsedIntent>,
+          waUser.language_pref
         )
       }
 
@@ -398,10 +400,12 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Prom
 
     } else {
       // Normal parse (no clarification context)
-      intent = await parseMessage(messageBody, {
-        businessName: 'Business', // TODO: Fetch from business table
-        currency: 'NGN'
-      })
+      intent = await parseMessage(
+        messageBody,
+        { businessName: 'Business', currency: 'NGN' },
+        undefined,
+        waUser.language_pref
+      )
     }
 
     // Check if clarification needed
@@ -712,7 +716,7 @@ function isQueryMessage(message: string): boolean {
 
 /**
  * Handle onboarding state machine for new users
- * State transitions: new → asked_name → asked_biz → first_sale → done
+ * State transitions: new → asked_name → asked_lang → asked_biz → first_sale → done
  * Returns true if message was consumed by onboarding, false otherwise
  */
 async function handleOnboarding(waUser: WhatsAppUser, message: string): Promise<boolean> {
@@ -734,7 +738,7 @@ async function handleOnboarding(waUser: WhatsAppUser, message: string): Promise<
     return true  // Consumed the message
   }
 
-  // State: asked_name → Save name, ask for business name
+  // State: asked_name → Save name, ask for language preference
   if (currentState === 'asked_name') {
     const userName = message.substring(0, 50).trim()
 
@@ -742,15 +746,45 @@ async function handleOnboarding(waUser: WhatsAppUser, message: string): Promise<
       .from('whatsapp_users')
       .update({
         owner_name: userName,
-        onboarding_state: 'asked_biz'
+        onboarding_state: 'asked_lang'
       })
       .eq('id', waUser.id)
 
     await sendMessage(
       waUser.wa_phone,
-      `Nice to meet you, ${userName}! 😊\n\n` +
-      `What's the name of your business?`
+      `Nice one ${userName} 🤝\n\n` +
+      `Quick one — you wan make I dey yarn with you for *Pidgin* or *English*?\n\n` +
+      `Reply *1* for Pidgin, *2* for English.`
     )
+    return true
+  }
+
+  // State: asked_lang → Save language preference, ask for business name
+  if (currentState === 'asked_lang') {
+    const text = message.trim()
+    const choice = /^1|pidgin|pidin|pigin/i.test(text) ? 'pidgin'
+                 : /^2|english|eng/i.test(text) ? 'english'
+                 : null
+
+    if (!choice) {
+      await sendMessage(waUser.wa_phone, "Reply *1* for Pidgin or *2* for English 🙏")
+      return true  // Stay on this step
+    }
+
+    await supabase
+      .from('whatsapp_users')
+      .update({
+        language_pref: choice,
+        onboarding_state: 'asked_biz'
+      })
+      .eq('id', waUser.id)
+
+    // Send next question in chosen language
+    const nextMessage = choice === 'pidgin'
+      ? "Better 👌 Wetin you dey sell? (e.g. phone accessories, food, clothes)"
+      : "Great 👌 What do you sell? (e.g. phone accessories, food, clothes)"
+
+    await sendMessage(waUser.wa_phone, nextMessage)
     return true
   }
 
@@ -779,16 +813,24 @@ async function handleOnboarding(waUser: WhatsAppUser, message: string): Promise<
       })
       .eq('id', waUser.id)
 
-    await sendMessage(
-      waUser.wa_phone,
-      `Perfect! 🎉\n\n` +
-      `${businessName} is all set up.\n\n` +
-      `Now, tell me about your first sale today. Examples:\n` +
-      `• "Sold 3 bags for 45k"\n` +
-      `• "I sell 2 bottles 500 naira"\n` +
-      `• 🎤 Or send a voice note!\n\n` +
-      `Type "help" anytime if you need assistance.`
-    )
+    // Send confirmation in chosen language
+    const confirmMessage = waUser.language_pref === 'pidgin'
+      ? `Perfect! 🎉\n\n` +
+        `${businessName} don set finish.\n\n` +
+        `Now, yarn me your first sale today. Like:\n` +
+        `• "I sell 3 bags 45k"\n` +
+        `• "Sold 2 bottles 500 naira"\n` +
+        `• 🎤 Or send voice note!\n\n` +
+        `Type "help" anytime you need am.`
+      : `Perfect! 🎉\n\n` +
+        `${businessName} is all set up.\n\n` +
+        `Now, tell me about your first sale today. Examples:\n` +
+        `• "Sold 3 bags for 45k"\n` +
+        `• "I sell 2 bottles 500 naira"\n` +
+        `• 🎤 Or send a voice note!\n\n` +
+        `Type "help" anytime if you need assistance.`
+
+    await sendMessage(waUser.wa_phone, confirmMessage)
     return true
   }
 
@@ -815,21 +857,37 @@ async function handleLinkCommand(waUser: WhatsAppUser, message: string): Promise
  * Handle help command
  */
 async function handleHelpCommand(waUser: WhatsAppUser): Promise<void> {
-  const helpMessage = `📚 *FLOIN Help*\n\n` +
-    `*Log a sale:*\n` +
-    `"Sold 3 bags 45k" or 🎤 voice note\n\n` +
-    `*Credit sale:*\n` +
-    `"Mama Nkechi carry 1 bag on credit 15k"\n\n` +
-    `*Owner withdrawal:*\n` +
-    `"I took 20k for myself"\n\n` +
-    `*Check today:*\n` +
-    `"How much today?"\n\n` +
-    `*Manage debts:*\n` +
-    `"Who dey owe me?" - List all debts\n` +
-    `"Mama Nkechi phone is 080..." - Save number\n` +
-    `"Remind Mama Nkechi" - Send reminder\n` +
-    `"Mark Mama Nkechi paid" - Clear debt\n\n` +
-    `Questions? Just ask! 😊`
+  const helpMessage = waUser.language_pref === 'pidgin'
+    ? `📚 *FLOIN Help*\n\n` +
+      `*Log sale:*\n` +
+      `"I sell 3 bags 45k" or 🎤 voice note\n\n` +
+      `*Credit sale:*\n` +
+      `"Mama Nkechi carry 1 bag on credit 15k"\n\n` +
+      `*Owner chop money:*\n` +
+      `"I take 20k for myself"\n\n` +
+      `*Check today:*\n` +
+      `"How much I make today?"\n\n` +
+      `*Manage debts:*\n` +
+      `"Who dey owe me?" - See all debts\n` +
+      `"Mama Nkechi phone is 080..." - Save number\n` +
+      `"Remind Mama Nkechi" - Send reminder\n` +
+      `"Mark Mama Nkechi paid" - Clear debt\n\n` +
+      `Any question? Just ask! 😊`
+    : `📚 *FLOIN Help*\n\n` +
+      `*Log a sale:*\n` +
+      `"Sold 3 bags 45k" or 🎤 voice note\n\n` +
+      `*Credit sale:*\n` +
+      `"Mama Nkechi carry 1 bag on credit 15k"\n\n` +
+      `*Owner withdrawal:*\n` +
+      `"I took 20k for myself"\n\n` +
+      `*Check today:*\n` +
+      `"How much today?"\n\n` +
+      `*Manage debts:*\n` +
+      `"Who dey owe me?" - List all debts\n` +
+      `"Mama Nkechi phone is 080..." - Save number\n` +
+      `"Remind Mama Nkechi" - Send reminder\n` +
+      `"Mark Mama Nkechi paid" - Clear debt\n\n` +
+      `Questions? Just ask! 😊`
 
   await sendMessage(waUser.wa_phone, helpMessage)
 }
