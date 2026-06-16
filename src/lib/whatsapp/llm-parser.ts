@@ -3,12 +3,7 @@
  * Uses Anthropic Claude to parse natural language (English + Nigerian Pidgin)
  */
 
-import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY
-})
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -122,82 +117,46 @@ export async function parseMessage(
   context?: { businessName?: string; currency?: string }
 ): Promise<ParsedIntent> {
   try {
-    console.log('🤖 Parsing message:', message)
+    console.log('🤖 Parsing message with GPT-4:', message)
 
-    // Try Anthropic Claude first
-    try {
-      const response = await anthropic.messages.create({
-        model: 'claude-3-opus-20240229',
-        max_tokens: 1024,
-        temperature: 0,
-        system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            content: message
-          }
-        ]
-      })
+    // Use OpenAI GPT-4
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: SYSTEM_PROMPT
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ],
+      temperature: 0,
+      max_tokens: 1024,
+      response_format: { type: 'json_object' }
+    })
 
-      const textContent = response.content[0]
-      if (textContent.type !== 'text') {
-        throw new Error('Unexpected response type from Claude')
-      }
+    const rawResponse = response.choices[0].message.content
+    console.log('🤖 GPT-4 raw response:', rawResponse)
 
-      console.log('🤖 Claude raw response:', textContent.text)
-
-      // Parse JSON response
-      const intent: ParsedIntent = JSON.parse(textContent.text)
-
-      console.log('🤖 Parsed intent:', JSON.stringify(intent, null, 2))
-
-      // Validate basic structure
-      if (!intent.intent) {
-        throw new Error('Missing intent field')
-      }
-
-      return intent
-
-    } catch (claudeError) {
-      console.error('❌ Claude failed, falling back to GPT-4:', claudeError)
-
-      // Fallback to GPT-4
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          {
-            role: 'system',
-            content: SYSTEM_PROMPT
-          },
-          {
-            role: 'user',
-            content: message
-          }
-        ],
-        temperature: 0,
-        max_tokens: 1024,
-        response_format: { type: 'json_object' }
-      })
-
-      const rawResponse = response.choices[0].message.content
-      console.log('🤖 GPT-4 fallback response:', rawResponse)
-
-      if (!rawResponse) {
-        throw new Error('Empty response from GPT-4')
-      }
-
-      const intent: ParsedIntent = JSON.parse(rawResponse)
-      console.log('🤖 Parsed intent (GPT-4):', JSON.stringify(intent, null, 2))
-
-      if (!intent.intent) {
-        throw new Error('Missing intent field')
-      }
-
-      return intent
+    if (!rawResponse) {
+      throw new Error('Empty response from GPT-4')
     }
 
+    // Parse JSON response
+    const intent: ParsedIntent = JSON.parse(rawResponse)
+    console.log('🤖 Parsed intent:', JSON.stringify(intent, null, 2))
+
+    // Validate basic structure
+    if (!intent.intent) {
+      throw new Error('Missing intent field')
+    }
+
+    return intent
+
   } catch (error) {
-    console.error('❌ All LLM parsing failed:', error)
+    console.error('❌ GPT-4 parsing error:', error)
     if (error instanceof Error) {
       console.error('Error details:', error.message)
     }
