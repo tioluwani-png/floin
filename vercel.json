@@ -9,5 +9,19 @@
         }
       ]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/daily-summaries",
+      "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-expired",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/monthly-reports",
+      "schedule": "0 7 1 * *"
+    }
   ]
 }
