@@ -58,6 +58,20 @@ export async function commitPendingAction(
       return { success: false, error: 'Action expired' }
     }
 
+    // Calculate total from items array or use top-level amount_kobo
+    const getTotalKobo = (intent: any): number => {
+      if (intent.items && intent.items.length > 0) {
+        return intent.items.reduce((sum: number, item: any) => {
+          if (!item.amount_kobo) return sum
+          const itemTotal = item.amount_basis === 'unit' && item.qty
+            ? item.amount_kobo * item.qty
+            : item.amount_kobo
+          return sum + itemTotal
+        }, 0)
+      }
+      return intent.amount_kobo || 0
+    }
+
     // Commit based on action type
     let committedId: string
     let message: string
@@ -74,21 +88,24 @@ export async function commitPendingAction(
         const expenseResult = await commitExpense(pendingAction)
         if (!expenseResult.success) return expenseResult
         committedId = expenseResult.recordId!
-        message = `✅ Expense saved! ${formatNaira(pendingAction.intent_data.amount_kobo)}`
+        const expenseAmount = getTotalKobo(pendingAction.intent_data)
+        message = `✅ Expense saved! ${formatNaira(expenseAmount)}`
         break
 
       case 'debt_payment':
         const paymentResult = await commitDebtPayment(pendingAction)
         if (!paymentResult.success) return paymentResult
         committedId = paymentResult.recordId!
-        message = `✅ Payment recorded! ${formatNaira(pendingAction.intent_data.amount_kobo)}`
+        const paymentAmount = getTotalKobo(pendingAction.intent_data)
+        message = `✅ Payment recorded! ${formatNaira(paymentAmount)}`
         break
 
       case 'withdrawal':
         const withdrawalResult = await commitWithdrawal(pendingAction)
         if (!withdrawalResult.success) return withdrawalResult
         committedId = withdrawalResult.recordId!
-        message = `✅ Withdrawal recorded! ${formatNaira(pendingAction.intent_data.amount_kobo)}\n\nThis is tracked separately from business expenses.`
+        const withdrawalAmount = getTotalKobo(pendingAction.intent_data)
+        message = `✅ Withdrawal recorded! ${formatNaira(withdrawalAmount)}\n\nThis is tracked separately from business expenses.`
         break
 
       default:
@@ -127,22 +144,50 @@ async function commitSale(
 ): Promise<{ success: boolean; recordId?: string; error?: string }> {
   try {
     const intent = pending.intent_data
+
+    // Calculate total from items
+    const totalKobo = intent.items && intent.items.length > 0
+      ? intent.items.reduce((sum: number, item: any) => {
+          if (item.kind !== 'sale' || !item.amount_kobo) return sum
+          const itemTotal = item.amount_basis === 'unit' && item.qty
+            ? item.amount_kobo * item.qty
+            : item.amount_kobo
+          return sum + itemTotal
+        }, 0)
+      : (intent.amount_kobo || 0)
+
+    // Get total units
+    const totalUnits = intent.items && intent.items.length > 0
+      ? intent.items.reduce((sum: number, item: any) => sum + (item.qty || 1), 0)
+      : 1
+
+    // Convert time_ref to actual date
+    const getDateString = (timeRef: string | null): string => {
+      const today = new Date()
+      if (!timeRef || timeRef === 'today') {
+        return today.toISOString().split('T')[0]
+      }
+      if (timeRef === 'yesterday') {
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+        return yesterday.toISOString().split('T')[0]
+      }
+      // For other time refs, default to today
+      return today.toISOString().split('T')[0]
+    }
+
     const saleId = generateId()
-
-    // CRITICAL: Convert kobo to naira for existing sales_entries table
-    const amountNaira = intent.amount_kobo / 100
-
-    // Check if this is a credit sale (has customer_name)
-    const isCredit = Boolean(intent.customer_name)
+    const amountNaira = totalKobo / 100  // Convert to naira
+    const isCredit = Boolean(intent.party)  // party instead of customer_name
 
     const { error: saleError } = await supabase
       .from('sales_entries')
       .insert({
         id: saleId,
         business_id: pending.business_id,
-        date: intent.date,
+        date: getDateString(intent.time_ref),
         channel: 'whatsapp',
-        units: intent.units,
+        units: totalUnits,
         amount: amountNaira,
         delivery_fee: 0,
         note: intent.note || '',
@@ -163,10 +208,10 @@ async function commitSale(
         .insert({
           id: debtId,
           business_id: pending.business_id,
-          customer_name: intent.customer_name!,
-          amount_kobo: intent.amount_kobo,
-          balance_kobo: intent.amount_kobo,
-          sale_date: intent.date,
+          customer_name: intent.party!,  // party instead of customer_name
+          amount_kobo: totalKobo,
+          balance_kobo: totalKobo,
+          sale_date: getDateString(intent.time_ref),
           note: intent.note,
           status: 'outstanding',
           created_at: new Date().toISOString(),
@@ -273,13 +318,33 @@ async function commitWithdrawal(
     const intent = pending.intent_data
     const withdrawalId = generateId()
 
+    // Calculate total from items or use top-level amount
+    const totalKobo = intent.items && intent.items.length > 0
+      ? intent.items.reduce((sum: number, item: any) => {
+          if (item.kind !== 'withdrawal' || !item.amount_kobo) return sum
+          return sum + item.amount_kobo
+        }, 0)
+      : (intent.amount_kobo || 0)
+
+    // Convert time_ref to date
+    const getDateString = (timeRef: string | null): string => {
+      const today = new Date()
+      if (!timeRef || timeRef === 'today') return today.toISOString().split('T')[0]
+      if (timeRef === 'yesterday') {
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+        return yesterday.toISOString().split('T')[0]
+      }
+      return today.toISOString().split('T')[0]
+    }
+
     const { error: withdrawalError } = await supabase
       .from('owner_withdrawals')
       .insert({
         id: withdrawalId,
         business_id: pending.business_id,
-        amount_kobo: intent.amount_kobo,
-        withdrawal_date: intent.date,
+        amount_kobo: totalKobo,
+        withdrawal_date: getDateString(intent.time_ref),
         note: intent.note || 'Personal withdrawal',
         created_at: new Date().toISOString()
       })
@@ -304,16 +369,32 @@ async function commitWithdrawal(
  */
 async function formatSaleReceipt(pending: PendingAction): Promise<string> {
   const intent = pending.intent_data
-  const amount = formatNaira(intent.amount_kobo)
+
+  // Calculate total from items
+  const totalKobo = intent.items && intent.items.length > 0
+    ? intent.items.reduce((sum: number, item: any) => {
+        if (item.kind !== 'sale' || !item.amount_kobo) return sum
+        const itemTotal = item.amount_basis === 'unit' && item.qty
+          ? item.amount_kobo * item.qty
+          : item.amount_kobo
+        return sum + itemTotal
+      }, 0)
+    : (intent.amount_kobo || 0)
+
+  const totalUnits = intent.items && intent.items.length > 0
+    ? intent.items.reduce((sum: number, item: any) => sum + (item.qty || 1), 0)
+    : 1
+
+  const amount = formatNaira(totalKobo)
 
   // Get today's total
   const todayTotal = await getTodayTotal(pending.business_id)
 
   let message = `✅ *Sale saved!*\n\n`
-  message += `${amount} × ${intent.units} unit${intent.units > 1 ? 's' : ''}\n`
+  message += `${amount} × ${totalUnits} unit${totalUnits > 1 ? 's' : ''}\n`
 
-  if (intent.customer_name) {
-    message += `\n💳 Credit to ${intent.customer_name}\n`
+  if (intent.party) {  // party instead of customer_name
+    message += `\n💳 Credit to ${intent.party}\n`
   }
 
   message += `\n📊 *Today's total:* ${formatNaira(todayTotal)}`
