@@ -141,13 +141,15 @@ export async function POST(req: NextRequest) {
 
     console.log(`✅ Message stored: ${waMessageId} from ${waPhone}`)
 
-    // 5. Process message asynchronously (non-blocking)
-    // Note: In production with Vercel, use waitUntil() for better async handling
-    processMessage(messageId).catch(error => {
-      console.error('Background processing error:', error)
-    })
+    // 5. Process message (must complete before response for Vercel serverless)
+    try {
+      await processMessage(messageId)
+    } catch (error) {
+      console.error('❌ Processing error:', error)
+      // Continue and return 200 to prevent Meta retries
+    }
 
-    // 6. Return 200 immediately
+    // 6. Return 200
     return NextResponse.json({ status: 'received' }, { status: 200 })
 
   } catch (error) {
