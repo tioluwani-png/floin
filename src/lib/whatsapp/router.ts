@@ -168,10 +168,10 @@ export async function processMessage(messageId: string): Promise<void> {
 async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<void> {
   const normalizedMessage = messageBody.toLowerCase().trim()
 
-  // Check for pending confirmation first
+  // Check for pending confirmation first (exclude 'clarifying' - those need to go to parser)
   const pending = await getActivePending(waUser.wa_phone)
 
-  if (pending) {
+  if (pending && pending.action_type !== 'clarifying') {
     await handleConfirmationReply(waUser, messageBody, pending)
     return
   }
