@@ -301,8 +301,14 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Prom
       currency: 'NGN'
     })
 
-    // Check intent type
-    if (intent.intent === 'unclear') {
+    // Check if clarification needed
+    if (intent.needs_clarification && intent.clarification_question) {
+      await sendMessage(waUser.wa_phone, intent.clarification_question)
+      return
+    }
+
+    // Handle special intents
+    if (intent.intent === 'other' || intent.intent === 'help') {
       await sendMessage(
         waUser.wa_phone,
         `Sorry, I didn't understand that.\n\n` +
@@ -311,18 +317,22 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Prom
       return
     }
 
-    if (intent.intent === 'query') {
+    if (intent.intent === 'greeting' || intent.intent === 'thanks') {
+      await handleHelpCommand(waUser)
+      return
+    }
+
+    if (intent.intent === 'query' || intent.intent === 'list_debts' || intent.intent === 'debt_check') {
       await handleQuery(waUser, intent.query_text || messageBody)
       return
     }
 
-    // Check confidence
-    if (intent.confidence === 'low') {
+    // Check confidence (0.0-1.0 now)
+    if (intent.confidence < 0.6) {
       await sendMessage(
         waUser.wa_phone,
         `I'm not sure I understood correctly.\n\n` +
-        `${intent.reasoning}\n\n` +
-        `Please try again with more details.`
+        `${intent.note || 'Please try again with more details.'}`
       )
       return
     }

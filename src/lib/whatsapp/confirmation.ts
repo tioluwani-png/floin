@@ -46,17 +46,19 @@ export async function createPendingAction(
   intent: ParsedIntent
 ): Promise<{ success: boolean; pendingId?: string; error?: string }> {
   try {
-    // Determine action type from intent
+    // Determine action type from new intent types
     let actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction'
 
-    if (intent.intent === 'sale') {
+    if (intent.intent === 'log_sale' || intent.intent === 'log_sale_credit') {
       actionType = 'sale'
-    } else if (intent.intent === 'expense') {
+    } else if (intent.intent === 'log_expense') {
       actionType = 'expense'
-    } else if (intent.intent === 'debt_payment') {
+    } else if (intent.intent === 'log_payment_received') {
       actionType = 'debt_payment'
-    } else if (intent.intent === 'withdrawal') {
+    } else if (intent.intent === 'log_owner_withdrawal') {
       actionType = 'withdrawal'
+    } else if (intent.intent === 'correction') {
+      actionType = 'correction'
     } else {
       return {
         success: false,
@@ -230,23 +232,46 @@ function formatConfirmationMessage(
   intent: ParsedIntent,
   actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction'
 ): string {
-  const amount = formatNaira(intent.amount_kobo)
-  const date = formatDate(intent.date)
+  // Calculate total from items
+  const totalKobo = intent.items.reduce((sum, item) => {
+    if (!item.amount_kobo) return sum
+    const itemTotal = item.amount_basis === 'unit' && item.qty
+      ? item.amount_kobo * item.qty
+      : item.amount_kobo
+    return sum + itemTotal
+  }, 0)
+
+  const amount = formatNaira(totalKobo || intent.amount_kobo || 0)
+  const date = formatDate(intent.time_ref || 'today')
 
   if (actionType === 'sale') {
     let message = '📝 *Confirm this sale?*\n\n'
-    message += `💰 Amount: ${amount}\n`
-    message += `📦 Units: ${intent.units}\n`
+
+    // Show items
+    if (intent.items.length > 0) {
+      intent.items.forEach(item => {
+        if (item.kind === 'sale') {
+          const itemAmount = item.amount_basis === 'unit' && item.qty
+            ? item.amount_kobo! * item.qty
+            : item.amount_kobo || 0
+          message += `📦 ${item.qty || ''} ${item.description || 'item'}: ${formatNaira(itemAmount)}\n`
+        }
+      })
+      message += `\n💰 Total: ${amount}\n`
+    } else {
+      message += `💰 Amount: ${amount}\n`
+    }
+
     message += `📅 Date: ${date}\n`
 
     if (intent.note) {
-      message += `📌 Note: ${intent.note}\n`
+      message += `📌 ${intent.note}\n`
     }
 
-    if (intent.customer_name) {
+    if (intent.party) {
       message += `\n💳 *Credit Sale*\n`
-      message += `Customer: ${intent.customer_name}\n`
-      message += `(Customer owes ${amount})`
+      message += `Customer: ${intent.party}\n`
+      message += `(${intent.party} owes ${amount})`
     }
 
     return message
@@ -257,8 +282,8 @@ function formatConfirmationMessage(
     message += `💸 Amount: ${amount}\n`
     message += `📅 Date: ${date}\n`
 
-    if (intent.note) {
-      message += `📌 Note: ${intent.note}\n`
+    if (intent.note || (intent.items.length > 0 && intent.items[0].description)) {
+      message += `📌 ${intent.note || intent.items[0].description}\n`
     }
 
     return message
@@ -269,8 +294,8 @@ function formatConfirmationMessage(
     message += `💰 Amount: ${amount}\n`
     message += `📅 Date: ${date}\n`
 
-    if (intent.customer_name) {
-      message += `👤 From: ${intent.customer_name}\n`
+    if (intent.party) {
+      message += `👤 From: ${intent.party}\n`
     }
 
     return message
@@ -293,7 +318,20 @@ function formatConfirmationMessage(
  * Format date for display
  */
 function formatDate(dateString: string): string {
+  // Handle time_ref values
+  if (dateString === 'today') return 'Today'
+  if (dateString === 'yesterday') return 'Yesterday'
+  if (dateString === 'this_week') return 'This week'
+  if (dateString === 'last_week') return 'Last week'
+  if (dateString === 'this_month') return 'This month'
+  if (dateString === 'last_month') return 'Last month'
+
+  // Handle actual dates
   const date = new Date(dateString)
+  if (isNaN(date.getTime())) {
+    return 'Today' // Default fallback
+  }
+
   const today = new Date()
   const yesterday = new Date(today)
   yesterday.setDate(yesterday.getDate() - 1)
