@@ -124,33 +124,29 @@ export async function parseMessage(
   try {
     console.log('🤖 Parsing message:', message)
 
-    // Use OpenAI GPT-4 instead of Anthropic (fallback due to API issues)
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
+    // Use Anthropic Claude
+    const response = await anthropic.messages.create({
+      model: 'claude-3-opus-20240229',
+      max_tokens: 1024,
+      temperature: 0,
+      system: SYSTEM_PROMPT,
       messages: [
-        {
-          role: 'system',
-          content: SYSTEM_PROMPT
-        },
         {
           role: 'user',
           content: message
         }
-      ],
-      temperature: 0,
-      max_tokens: 1024,
-      response_format: { type: 'json_object' }
+      ]
     })
 
-    const rawResponse = response.choices[0].message.content
-    console.log('🤖 GPT-4 raw response:', rawResponse)
-
-    if (!rawResponse) {
-      throw new Error('Empty response from GPT-4')
+    const textContent = response.content[0]
+    if (textContent.type !== 'text') {
+      throw new Error('Unexpected response type from Claude')
     }
 
+    console.log('🤖 Claude raw response:', textContent.text)
+
     // Parse JSON response
-    const intent: ParsedIntent = JSON.parse(rawResponse)
+    const intent: ParsedIntent = JSON.parse(textContent.text)
 
     console.log('🤖 Parsed intent:', JSON.stringify(intent, null, 2))
 
