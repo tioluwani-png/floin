@@ -117,6 +117,8 @@ export async function parseMessage(
   context?: { businessName?: string; currency?: string }
 ): Promise<ParsedIntent> {
   try {
+    console.log('🤖 Parsing message:', message)
+
     const response = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1024,
@@ -135,8 +137,12 @@ export async function parseMessage(
       throw new Error('Unexpected response type from Claude')
     }
 
+    console.log('🤖 Claude raw response:', textContent.text)
+
     // Parse JSON response
     const intent: ParsedIntent = JSON.parse(textContent.text)
+
+    console.log('🤖 Parsed intent:', JSON.stringify(intent, null, 2))
 
     // Validate basic structure
     if (!intent.intent) {
@@ -146,7 +152,10 @@ export async function parseMessage(
     return intent
 
   } catch (error) {
-    console.error('LLM parsing error:', error)
+    console.error('❌ LLM parsing error:', error)
+    if (error instanceof Error) {
+      console.error('Error details:', error.message)
+    }
 
     // Return unclear intent on error
     return {
