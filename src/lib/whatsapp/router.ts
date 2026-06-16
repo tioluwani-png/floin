@@ -213,6 +213,19 @@ async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<
     return
   }
 
+  // Handle greetings
+  if (
+    normalizedMessage === 'hi' ||
+    normalizedMessage === 'hello' ||
+    normalizedMessage === 'hey' ||
+    normalizedMessage === 'good morning' ||
+    normalizedMessage === 'good afternoon' ||
+    normalizedMessage === 'good evening'
+  ) {
+    await handleHelpCommand(waUser)
+    return
+  }
+
   // Detect query vs transaction
   if (isQueryMessage(normalizedMessage)) {
     await handleQuery(waUser, messageBody)
