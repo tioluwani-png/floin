@@ -111,12 +111,32 @@ export async function processMessage(messageId: string): Promise<void> {
       return
     }
 
-    // Other media types not supported yet
+    // Handle other message types
     if (messageType !== 'text') {
-      await sendMessage(
-        waPhone,
-        '📸 Images and documents coming soon! For now, please send text or voice messages.'
-      )
+      // Silently ignore button responses, reactions, and status updates
+      // (Users also send text replies, so we handle those)
+      const ignoredTypes = ['button', 'interactive', 'reaction', 'status', 'unknown']
+
+      if (ignoredTypes.includes(messageType)) {
+        await markMessageProcessed(messageId)
+        return
+      }
+
+      // For actual media types, send helpful message
+      if (messageType === 'image' || messageType === 'document') {
+        await sendMessage(
+          waPhone,
+          '📎 I can\'t read images or documents yet.\n\n' +
+          'Please describe your sale in text or send a voice note.'
+        )
+      } else {
+        await sendMessage(
+          waPhone,
+          '❓ I didn\'t understand that message type.\n\n' +
+          'Please send text or voice messages.'
+        )
+      }
+
       await markMessageProcessed(messageId)
       return
     }

@@ -105,6 +105,16 @@ export async function POST(req: NextRequest) {
         mediaUrl = message.document?.id
         mediaMimeType = message.document?.mime_type
         break
+      case 'button':
+      case 'interactive':
+        // Extract button response (user clicked a button)
+        messageBody = message.button?.text || message.interactive?.button_reply?.title || null
+        break
+      case 'reaction':
+      case 'status':
+        // Ignore reactions and status updates
+        messageBody = null
+        break
       default:
         messageBody = `[Unsupported message type: ${messageType}]`
     }
