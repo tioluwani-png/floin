@@ -3,10 +3,10 @@
  * Uses Anthropic Claude to parse natural language (English + Nigerian Pidgin)
  */
 
-import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
 })
 
 // Enhanced parsed intent structure (matches FLOIN spec)
@@ -133,18 +133,10 @@ export async function parseMessage(
   languagePref?: string
 ): Promise<ParsedIntent> {
   try {
-    console.log('🤖 Parsing message with GPT-4:', message)
+    console.log('🤖 Parsing message with Claude:', message)
     if (partialParse) {
       console.log('🔄 Merge mode - partial parse:', JSON.stringify(partialParse, null, 2))
     }
-
-    // Build messages array
-    const messages: Array<{ role: 'system' | 'user'; content: string }> = [
-      {
-        role: 'system',
-        content: SYSTEM_PROMPT
-      }
-    ]
 
     // Build user content with language preference hint if provided
     let userContent = ''
@@ -159,25 +151,25 @@ export async function parseMessage(
       userContent += message
     }
 
-    messages.push({
-      role: 'user',
-      content: userContent
-    })
-
-    // Use OpenAI GPT-4
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages,
-      temperature: 0,
+    // Use Anthropic Claude
+    const response = await anthropic.messages.create({
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1024,
-      response_format: { type: 'json_object' }
+      temperature: 0,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: userContent
+        }
+      ]
     })
 
-    const rawResponse = response.choices[0].message.content
-    console.log('🤖 GPT-4 raw response:', rawResponse)
+    const rawResponse = response.content[0].type === 'text' ? response.content[0].text : null
+    console.log('🤖 Claude raw response:', rawResponse)
 
     if (!rawResponse) {
-      throw new Error('Empty response from GPT-4')
+      throw new Error('Empty response from Claude')
     }
 
     // Parse JSON response
@@ -192,7 +184,7 @@ export async function parseMessage(
     return intent
 
   } catch (error) {
-    console.error('❌ GPT-4 parsing error:', error)
+    console.error('❌ Claude parsing error:', error)
     if (error instanceof Error) {
       console.error('Error details:', error.message)
     }
