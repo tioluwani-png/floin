@@ -124,41 +124,80 @@ export async function parseMessage(
   try {
     console.log('🤖 Parsing message:', message)
 
-    // Use Anthropic Claude
-    const response = await anthropic.messages.create({
-      model: 'claude-3-opus-20240229',
-      max_tokens: 1024,
-      temperature: 0,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: message
-        }
-      ]
-    })
+    // Try Anthropic Claude first
+    try {
+      const response = await anthropic.messages.create({
+        model: 'claude-3-opus-20240229',
+        max_tokens: 1024,
+        temperature: 0,
+        system: SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: message
+          }
+        ]
+      })
 
-    const textContent = response.content[0]
-    if (textContent.type !== 'text') {
-      throw new Error('Unexpected response type from Claude')
+      const textContent = response.content[0]
+      if (textContent.type !== 'text') {
+        throw new Error('Unexpected response type from Claude')
+      }
+
+      console.log('🤖 Claude raw response:', textContent.text)
+
+      // Parse JSON response
+      const intent: ParsedIntent = JSON.parse(textContent.text)
+
+      console.log('🤖 Parsed intent:', JSON.stringify(intent, null, 2))
+
+      // Validate basic structure
+      if (!intent.intent) {
+        throw new Error('Missing intent field')
+      }
+
+      return intent
+
+    } catch (claudeError) {
+      console.error('❌ Claude failed, falling back to GPT-4:', claudeError)
+
+      // Fallback to GPT-4
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: SYSTEM_PROMPT
+          },
+          {
+            role: 'user',
+            content: message
+          }
+        ],
+        temperature: 0,
+        max_tokens: 1024,
+        response_format: { type: 'json_object' }
+      })
+
+      const rawResponse = response.choices[0].message.content
+      console.log('🤖 GPT-4 fallback response:', rawResponse)
+
+      if (!rawResponse) {
+        throw new Error('Empty response from GPT-4')
+      }
+
+      const intent: ParsedIntent = JSON.parse(rawResponse)
+      console.log('🤖 Parsed intent (GPT-4):', JSON.stringify(intent, null, 2))
+
+      if (!intent.intent) {
+        throw new Error('Missing intent field')
+      }
+
+      return intent
     }
-
-    console.log('🤖 Claude raw response:', textContent.text)
-
-    // Parse JSON response
-    const intent: ParsedIntent = JSON.parse(textContent.text)
-
-    console.log('🤖 Parsed intent:', JSON.stringify(intent, null, 2))
-
-    // Validate basic structure
-    if (!intent.intent) {
-      throw new Error('Missing intent field')
-    }
-
-    return intent
 
   } catch (error) {
-    console.error('❌ LLM parsing error:', error)
+    console.error('❌ All LLM parsing failed:', error)
     if (error instanceof Error) {
       console.error('Error details:', error.message)
     }
