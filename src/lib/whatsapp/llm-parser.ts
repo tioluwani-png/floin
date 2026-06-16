@@ -4,9 +4,14 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
+})
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
 })
 
 // Enhanced parsed intent structure (matches FLOIN spec)
@@ -119,28 +124,33 @@ export async function parseMessage(
   try {
     console.log('🤖 Parsing message:', message)
 
-    const response = await anthropic.messages.create({
-      model: 'claude-3-sonnet-20240229',
-      max_tokens: 1024,
-      temperature: 0,
-      system: SYSTEM_PROMPT,
+    // Use OpenAI GPT-4 instead of Anthropic (fallback due to API issues)
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
       messages: [
+        {
+          role: 'system',
+          content: SYSTEM_PROMPT
+        },
         {
           role: 'user',
           content: message
         }
-      ]
+      ],
+      temperature: 0,
+      max_tokens: 1024,
+      response_format: { type: 'json_object' }
     })
 
-    const textContent = response.content[0]
-    if (textContent.type !== 'text') {
-      throw new Error('Unexpected response type from Claude')
+    const rawResponse = response.choices[0].message.content
+    console.log('🤖 GPT-4 raw response:', rawResponse)
+
+    if (!rawResponse) {
+      throw new Error('Empty response from GPT-4')
     }
 
-    console.log('🤖 Claude raw response:', textContent.text)
-
     // Parse JSON response
-    const intent: ParsedIntent = JSON.parse(textContent.text)
+    const intent: ParsedIntent = JSON.parse(rawResponse)
 
     console.log('🤖 Parsed intent:', JSON.stringify(intent, null, 2))
 
