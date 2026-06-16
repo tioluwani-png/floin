@@ -27,8 +27,9 @@ export interface PendingAction {
   id: string
   wa_phone: string
   business_id: string
-  action_type: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction'
+  action_type: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying'
   intent_data: ParsedIntent
+  partial_parse?: Partial<ParsedIntent>  // For clarification context
   confirmation_message: string
   status: 'pending' | 'confirmed' | 'rejected' | 'expired'
   expires_at: string
@@ -47,7 +48,7 @@ export async function createPendingAction(
 ): Promise<{ success: boolean; pendingId?: string; error?: string }> {
   try {
     // Determine action type from new intent types
-    let actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction'
+    let actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying'
 
     if (intent.intent === 'log_sale' || intent.intent === 'log_sale_credit') {
       actionType = 'sale'

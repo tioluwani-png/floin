@@ -111,27 +111,46 @@ Always return exactly one JSON object. Nothing else.`
 
 /**
  * Parse user message with enhanced FLOIN prompt
+ * @param message - User's message
+ * @param context - Optional business context
+ * @param partialParse - Optional partial parse for clarification context (merge mode)
  */
 export async function parseMessage(
   message: string,
-  context?: { businessName?: string; currency?: string }
+  context?: { businessName?: string; currency?: string },
+  partialParse?: Partial<ParsedIntent>
 ): Promise<ParsedIntent> {
   try {
     console.log('🤖 Parsing message with GPT-4:', message)
+    if (partialParse) {
+      console.log('🔄 Merge mode - partial parse:', JSON.stringify(partialParse, null, 2))
+    }
+
+    // Build messages array
+    const messages: Array<{ role: 'system' | 'user'; content: string }> = [
+      {
+        role: 'system',
+        content: SYSTEM_PROMPT
+      }
+    ]
+
+    // If partial parse exists, add merge mode context
+    if (partialParse) {
+      messages.push({
+        role: 'user',
+        content: `Previous partial parse (user said this before):\n${JSON.stringify(partialParse, null, 2)}\n\nNow user replied: "${message}"\n\nMerge the new reply with the partial parse. If the new message is just a number and amount_kobo was missing, fill it in. Return the complete merged intent.`
+      })
+    } else {
+      messages.push({
+        role: 'user',
+        content: message
+      })
+    }
 
     // Use OpenAI GPT-4
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
-      messages: [
-        {
-          role: 'system',
-          content: SYSTEM_PROMPT
-        },
-        {
-          role: 'user',
-          content: message
-        }
-      ],
+      messages,
       temperature: 0,
       max_tokens: 1024,
       response_format: { type: 'json_object' }

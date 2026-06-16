@@ -125,6 +125,25 @@ export async function commitPendingAction(
     // Send receipt to user
     await sendMessage(pendingAction.wa_phone, message)
 
+    // Mark onboarding as complete if this is first transaction (state = first_sale)
+    const { data: waUser } = await supabase
+      .from('whatsapp_users')
+      .select('onboarding_state')
+      .eq('wa_phone', pendingAction.wa_phone)
+      .single()
+
+    if (waUser && waUser.onboarding_state === 'first_sale') {
+      await supabase
+        .from('whatsapp_users')
+        .update({
+          onboarding_state: 'done',
+          onboarding_completed_at: new Date().toISOString()
+        })
+        .eq('wa_phone', pendingAction.wa_phone)
+
+      console.log('✅ Onboarding complete for', pendingAction.wa_phone)
+    }
+
     return { success: true }
 
   } catch (error) {

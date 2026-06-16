@@ -4,7 +4,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
-import { parseMessage } from './llm-parser'
+import { parseMessage, ParsedIntent } from './llm-parser'
 import { createPendingAction, getActivePending, rejectPendingAction } from './confirmation'
 import { commitPendingAction } from './commit'
 import { sendMessage, formatNaira } from './api-client'
@@ -41,6 +41,8 @@ interface WhatsAppUser {
   business_id: string | null
   preferred_language: string
   onboarding_completed_at: string | null
+  onboarding_state: string
+  owner_name: string | null
   subscription_status: string
   trial_ends_at: string | null
 }
@@ -185,10 +187,10 @@ async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<
     return
   }
 
-  // Onboarding flow
-  if (!waUser.onboarding_completed_at) {
-    await handleOnboarding(waUser, messageBody)
-    return
+  // Onboarding flow - must come before parser to avoid asking LLM about onboarding questions
+  if (waUser.onboarding_state !== 'done') {
+    const consumed = await handleOnboarding(waUser, messageBody)
+    if (consumed) return  // Onboarding consumed the message
   }
 
   // Check if user has a business context
@@ -295,14 +297,98 @@ async function handleConfirmationReply(
  */
 async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Promise<void> {
   try {
-    // Parse with LLM
-    const intent = await parseMessage(messageBody, {
-      businessName: 'Business', // TODO: Fetch from business table
-      currency: 'NGN'
-    })
+    // Check if there's an active clarification pending
+    const { data: clarificationPending } = await supabase
+      .from('whatsapp_pending_actions')
+      .select('*')
+      .eq('wa_phone', waUser.wa_phone)
+      .eq('action_type', 'clarifying')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    let intent
+
+    // If there's a clarification context, use merge mode
+    if (clarificationPending && clarificationPending.partial_parse) {
+      console.log('🔄 Clarification context found, using merge mode')
+
+      // Shortcut: if reply is just a number, assume it's the amount
+      const numberMatch = messageBody.match(/^(\d+\.?\d*)[kKmM]?$/)
+      if (numberMatch) {
+        const partialParse = clarificationPending.partial_parse as Partial<ParsedIntent>
+
+        // Parse the amount
+        let amountKobo = 0
+        const value = parseFloat(numberMatch[1])
+        const suffix = messageBody.toLowerCase()
+
+        if (suffix.includes('k')) {
+          amountKobo = value * 1000 * 100  // k = thousand, convert to kobo
+        } else if (suffix.includes('m')) {
+          amountKobo = value * 1000000 * 100  // m = million, convert to kobo
+        } else {
+          amountKobo = value * 100  // plain number, convert to kobo
+        }
+
+        // Merge with partial parse
+        intent = {
+          ...partialParse,
+          items: (partialParse.items || []).map(item => ({
+            ...item,
+            amount_kobo: item.amount_kobo || amountKobo,
+            amount_basis: item.amount_basis || 'total'
+          })),
+          amount_kobo: amountKobo,
+          confidence: 0.95,
+          needs_clarification: false,
+          clarification_question: null
+        } as ParsedIntent
+
+        console.log('✅ Shortcut: plain number merged as amount')
+      } else {
+        // Use LLM merge mode
+        intent = await parseMessage(
+          messageBody,
+          { businessName: 'Business', currency: 'NGN' },
+          clarificationPending.partial_parse as Partial<ParsedIntent>
+        )
+      }
+
+      // Delete the clarification pending action
+      await supabase
+        .from('whatsapp_pending_actions')
+        .delete()
+        .eq('id', clarificationPending.id)
+
+    } else {
+      // Normal parse (no clarification context)
+      intent = await parseMessage(messageBody, {
+        businessName: 'Business', // TODO: Fetch from business table
+        currency: 'NGN'
+      })
+    }
 
     // Check if clarification needed
     if (intent.needs_clarification && intent.clarification_question) {
+      // Save partial parse for context
+      const clarificationId = generateId()
+
+      await supabase
+        .from('whatsapp_pending_actions')
+        .insert({
+          id: clarificationId,
+          wa_phone: waUser.wa_phone,
+          business_id: waUser.business_id!,
+          action_type: 'clarifying',
+          intent_data: intent,
+          partial_parse: intent,  // Save full intent as partial parse
+          confirmation_message: intent.clarification_question,
+          status: 'pending',
+          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()  // 10 min expiry
+        })
+
       await sendMessage(waUser.wa_phone, intent.clarification_question)
       return
     }
@@ -591,18 +677,59 @@ function isQueryMessage(message: string): boolean {
 }
 
 /**
- * Handle onboarding for new users
+ * Handle onboarding state machine for new users
+ * State transitions: new → asked_name → asked_biz → first_sale → done
+ * Returns true if message was consumed by onboarding, false otherwise
  */
-async function handleOnboarding(waUser: WhatsAppUser, message: string): Promise<void> {
-  // Simple onboarding: ask for business name
-  if (!waUser.business_id) {
-    // Create guest business
+async function handleOnboarding(waUser: WhatsAppUser, message: string): Promise<boolean> {
+  const currentState = waUser.onboarding_state
+
+  // State: new → Ask for user's name
+  if (currentState === 'new') {
+    await supabase
+      .from('whatsapp_users')
+      .update({ onboarding_state: 'asked_name' })
+      .eq('id', waUser.id)
+
+    await sendMessage(
+      waUser.wa_phone,
+      `👋 Welcome to FLOIN!\n\n` +
+      `I'm your bookkeeping assistant. I'll help you track sales, expenses, and debts via WhatsApp.\n\n` +
+      `First, what's your name?`
+    )
+    return true  // Consumed the message
+  }
+
+  // State: asked_name → Save name, ask for business name
+  if (currentState === 'asked_name') {
+    const userName = message.substring(0, 50).trim()
+
+    await supabase
+      .from('whatsapp_users')
+      .update({
+        owner_name: userName,
+        onboarding_state: 'asked_biz'
+      })
+      .eq('id', waUser.id)
+
+    await sendMessage(
+      waUser.wa_phone,
+      `Nice to meet you, ${userName}! 😊\n\n` +
+      `What's the name of your business?`
+    )
+    return true
+  }
+
+  // State: asked_biz → Create business, move to first_sale
+  if (currentState === 'asked_biz') {
+    const businessName = message.substring(0, 50).trim()
     const businessId = generateId()
 
+    // Create guest business
     await supabase.from('businesses').insert({
       id: businessId,
-      user_id: 'guest',  // Guest mode
-      name: message.substring(0, 50),
+      user_id: 'guest',  // Guest mode for now
+      name: businessName,
       type: 'product',
       currency: 'NGN',
       channels: ['whatsapp'],
@@ -613,20 +740,33 @@ async function handleOnboarding(waUser: WhatsAppUser, message: string): Promise<
       .from('whatsapp_users')
       .update({
         business_id: businessId,
-        onboarding_completed_at: new Date().toISOString(),
+        onboarding_state: 'first_sale',
         trial_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString() // 14 days
       })
       .eq('id', waUser.id)
 
     await sendMessage(
       waUser.wa_phone,
-      `Welcome to FLOIN! 🎉\n\n` +
-      `Your business "${message.substring(0, 50)}" is set up.\n\n` +
-      `Log your first sale now! Try:\n` +
-      `"Sold 3 bags 45k"\n\n` +
-      `Type "help" anytime for assistance.`
+      `Perfect! 🎉\n\n` +
+      `${businessName} is all set up.\n\n` +
+      `Now, tell me about your first sale today. Examples:\n` +
+      `• "Sold 3 bags for 45k"\n` +
+      `• "I sell 2 bottles 500 naira"\n` +
+      `• 🎤 Or send a voice note!\n\n` +
+      `Type "help" anytime if you need assistance.`
     )
+    return true
   }
+
+  // State: first_sale → Let message fall through to parser, mark as done after first confirmation
+  if (currentState === 'first_sale') {
+    // Don't consume the message - let it go to the parser
+    // We'll mark onboarding as done when they confirm their first transaction
+    return false
+  }
+
+  // State: done → Should never reach here
+  return false
 }
 
 /**
