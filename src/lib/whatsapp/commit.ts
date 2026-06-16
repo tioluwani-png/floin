@@ -180,19 +180,19 @@ async function commitSale(
       ? intent.items.reduce((sum: number, item: any) => sum + (item.qty || 1), 0)
       : 1
 
-    // Convert time_ref to actual date
+    // Convert time_ref to actual date (using Lagos timezone)
     const getDateString = (timeRef: string | null): string => {
       const today = new Date()
       if (!timeRef || timeRef === 'today') {
-        return today.toISOString().split('T')[0]
+        return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
       }
       if (timeRef === 'yesterday') {
         const yesterday = new Date(today)
         yesterday.setDate(yesterday.getDate() - 1)
-        return yesterday.toISOString().split('T')[0]
+        return yesterday.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
       }
       // For other time refs, default to today
-      return today.toISOString().split('T')[0]
+      return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
     }
 
     const saleId = generateId()
@@ -282,16 +282,18 @@ async function commitDebtPayment(
         }, 0)
       : (intent.amount_kobo || 0)
 
-    // Convert time_ref to date
+    // Convert time_ref to date (using Lagos timezone)
     const getDateString = (timeRef: string | null): string => {
       const today = new Date()
-      if (!timeRef || timeRef === 'today') return today.toISOString().split('T')[0]
+      if (!timeRef || timeRef === 'today') {
+        return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+      }
       if (timeRef === 'yesterday') {
         const yesterday = new Date(today)
         yesterday.setDate(yesterday.getDate() - 1)
-        return yesterday.toISOString().split('T')[0]
+        return yesterday.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
       }
-      return today.toISOString().split('T')[0]
+      return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
     }
 
     // Find outstanding debt for this customer
@@ -364,16 +366,18 @@ async function commitWithdrawal(
         }, 0)
       : (intent.amount_kobo || 0)
 
-    // Convert time_ref to date
+    // Convert time_ref to date (using Lagos timezone)
     const getDateString = (timeRef: string | null): string => {
       const today = new Date()
-      if (!timeRef || timeRef === 'today') return today.toISOString().split('T')[0]
+      if (!timeRef || timeRef === 'today') {
+        return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+      }
       if (timeRef === 'yesterday') {
         const yesterday = new Date(today)
         yesterday.setDate(yesterday.getDate() - 1)
-        return yesterday.toISOString().split('T')[0]
+        return yesterday.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
       }
-      return today.toISOString().split('T')[0]
+      return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
     }
 
     const { error: withdrawalError } = await supabase
