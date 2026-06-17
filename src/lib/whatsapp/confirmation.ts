@@ -74,7 +74,7 @@ export async function createPendingAction(
 
     // Create pending action
     const pendingId = generateId()
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000) // 1 hour from now
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000) // 30 minutes from now
 
     const { error: insertError } = await supabase
       .from('whatsapp_pending_actions')

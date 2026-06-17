@@ -257,16 +257,66 @@ async function commitSale(
 }
 
 /**
- * Commit an expense (Phase 2 - for now just log it)
+ * Commit an expense to whatsapp_expenses table
  */
 async function commitExpense(
   pending: PendingAction
 ): Promise<{ success: boolean; recordId?: string; error?: string }> {
-  // TODO: Implement expense tracking
-  // For Phase 1, we'll just acknowledge it
-  // Phase 2: Update expense_months table
-  console.log('Expense recorded (not yet implemented):', pending.intent_data)
-  return { success: true, recordId: generateId() }
+  try {
+    const intent = pending.intent_data
+
+    // Calculate total from items (same as sale logic)
+    const totalKobo = intent.items.reduce((sum: number, item: any) => {
+      if (!item.amount_kobo) return sum
+      const itemTotal = item.amount_basis === 'unit' && item.qty
+        ? item.amount_kobo * item.qty
+        : item.amount_kobo
+      return sum + itemTotal
+    }, 0) || intent.amount_kobo || 0
+
+    if (totalKobo === 0) {
+      return { success: false, error: 'Expense amount is required' }
+    }
+
+    const getDateString = (timeRef: string | null): string => {
+      const today = new Date()
+      if (!timeRef || timeRef === 'today') {
+        return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+      }
+      if (timeRef === 'yesterday') {
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+        return yesterday.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+      }
+      return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+    }
+
+    const expenseId = generateId()
+
+    const { error: expenseError } = await supabase
+      .from('whatsapp_expenses')
+      .insert({
+        id: expenseId,
+        business_id: pending.business_id,
+        amount_kobo: totalKobo,
+        expense_date: getDateString(intent.time_ref),
+        note: intent.note || intent.items[0]?.description || null,
+        created_at: new Date().toISOString()
+      })
+
+    if (expenseError) {
+      console.error('Failed to insert expense:', expenseError)
+      return { success: false, error: expenseError.message }
+    }
+
+    return { success: true, recordId: expenseId }
+  } catch (error) {
+    console.error('Error committing expense:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
 }
 
 /**

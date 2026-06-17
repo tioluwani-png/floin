@@ -192,9 +192,16 @@ async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<
   // Check for pending confirmation first (exclude 'clarifying' - those need to go to parser)
   const pending = await getActivePending(waUser.wa_phone)
 
+  let autoSavePrefix = ''
   if (pending && pending.action_type !== 'clarifying') {
-    await handleConfirmationReply(waUser, messageBody, pending)
-    return
+    // Parse the message to see if it's a confirmation or a new intent
+    const { isConfirmation, autoSaveMessage } = await handleConfirmationReply(waUser, messageBody, pending)
+    if (isConfirmation) {
+      return  // Confirmation was handled, stop here
+    }
+    // If not a confirmation, fall through to process as new intent
+    // (pending was auto-saved by handleConfirmationReply)
+    autoSavePrefix = autoSaveMessage || ''
   }
 
   // Check for special commands
@@ -251,23 +258,24 @@ async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<
 
   // Detect query vs transaction
   if (isQueryMessage(normalizedMessage)) {
-    await handleQuery(waUser, messageBody)
+    await handleQuery(waUser, messageBody, autoSavePrefix)
     return
   }
 
   // Default: Parse as sale intent
-  await handleSaleIntent(waUser, messageBody)
+  await handleSaleIntent(waUser, messageBody, autoSavePrefix)
 }
 
 /**
  * Handle confirmation reply (yes/no)
  * Uses tolerant matching to accept natural Nigerian English and Pidgin confirmations
+ * Returns object with isConfirmation flag and optional autoSaveMessage
  */
 async function handleConfirmationReply(
   waUser: WhatsAppUser,
   message: string,
   pending: any
-): Promise<void> {
+): Promise<{ isConfirmation: boolean; autoSaveMessage?: string }> {
   // Normalize: lowercase, trim, remove emojis and punctuation except word boundaries
   const normalized = message.toLowerCase().trim().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ')
 
@@ -289,7 +297,7 @@ async function handleConfirmationReply(
         `❌ Failed to save: ${result.error}\n\nPlease try again.`
       )
     }
-    return
+    return { isConfirmation: true }
   }
 
   // Check for negative response
@@ -299,34 +307,84 @@ async function handleConfirmationReply(
       waUser.wa_phone,
       '❌ Cancelled. Send a new message to try again.'
     )
-    return
+    return { isConfirmation: true }
   }
 
-  // Check if message looks like a new sale (not a yes/no response)
-  const saleKeywords = ['sold', 'sell', 'package', 'bag', 'bottle', 'piece', 'item', 'naira', 'kobo', 'also']
-  const looksLikeSale = saleKeywords.some(keyword => normalized.includes(keyword)) || /\d{3,}/.test(message)
-
-  if (looksLikeSale) {
-    // User is trying to log a new sale while there's a pending confirmation
+  // Check if it's a correction (e.g., "no na 4500")
+  const correctionPattern = /\b(no|wrong|na)\b.*\d+/i
+  if (correctionPattern.test(message)) {
+    // This is a correction - handle it
+    await rejectPendingAction(pending.id)
     await sendMessage(
       waUser.wa_phone,
-      `⚠️ You have a pending sale to confirm first!\n\n` +
-      `Reply *1* to save ✅  or  *2* to cancel ❌`
+      '❌ Cancelled. Send the correct amount:'
     )
-    return
+    return { isConfirmation: true }
   }
 
-  // Ambiguous response - re-prompt with clear instructions
-  await sendMessage(
-    waUser.wa_phone,
-    'Reply *1* to save ✅  or  *2* to cancel ❌'
-  )
+  // Parse the message to see if it's a NEW intent (query, new transaction, greeting, etc.)
+  try {
+    const intent = await parseMessage(message, { businessName: 'Business' }, undefined, waUser.language_pref || 'auto')
+
+    // Check if it's a clear new intent (not ambiguous)
+    const newIntents = ['query', 'log_sale', 'log_sale_credit', 'log_expense', 'log_owner_withdrawal',
+                        'log_loan_given', 'log_payment_received', 'greeting', 'thanks', 'help', 'list_debts']
+
+    if (newIntents.includes(intent.intent) && intent.confidence > 0.7) {
+      // This is a NEW intent - auto-save the pending entry and continue
+      console.log(`🔄 Auto-saving pending ${pending.action_type} to process new ${intent.intent}`)
+
+      const result = await commitPendingAction(pending.id)
+
+      // Format the pending action for the prepend message
+      const actionLabel = pending.action_type === 'sale' ? 'sale' :
+                         pending.action_type === 'expense' ? 'expense' :
+                         pending.action_type === 'loan_given' ? 'loan' :
+                         pending.action_type === 'withdrawal' ? 'withdrawal' :
+                         pending.action_type === 'debt_payment' ? 'payment' : 'entry'
+
+      const totalKobo = pending.intent_data.amount_kobo ||
+                       pending.intent_data.items?.reduce((sum: number, item: any) => {
+                         const itemTotal = item.amount_basis === 'unit' && item.qty
+                           ? item.amount_kobo * item.qty
+                           : item.amount_kobo
+                         return sum + itemTotal
+                       }, 0) || 0
+
+      let autoSaveMessage = ''
+      if (result.success) {
+        autoSaveMessage = `✅ Saved your pending ${formatNaira(totalKobo)} ${actionLabel} first.\n\n`
+      } else {
+        // If auto-save failed, just cancel it
+        await rejectPendingAction(pending.id)
+      }
+
+      return { isConfirmation: false, autoSaveMessage }  // Not a confirmation - let router continue
+    }
+
+    // If we get here, the intent is unclear or low confidence
+    // Re-prompt for confirmation
+    await sendMessage(
+      waUser.wa_phone,
+      'Reply *1* to save ✅  or  *2* to cancel ❌'
+    )
+    return { isConfirmation: true }  // Block processing of unclear message
+
+  } catch (error) {
+    console.error('Error parsing message during confirmation:', error)
+    // On parse error, just re-prompt
+    await sendMessage(
+      waUser.wa_phone,
+      'Reply *1* to save ✅  or  *2* to cancel ❌'
+    )
+    return { isConfirmation: true }
+  }
 }
 
 /**
  * Handle sale intent (main use case)
  */
-async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Promise<void> {
+async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoSavePrefix: string = ''): Promise<void> {
   try {
     // Check if there's an active clarification pending
     const { data: clarificationPending } = await supabase
@@ -443,7 +501,7 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Prom
     }
 
     if (intent.intent === 'query' || intent.intent === 'list_debts' || intent.intent === 'debt_check') {
-      await handleQuery(waUser, intent.query_text || messageBody)
+      await handleQuery(waUser, intent.query_text || messageBody, autoSavePrefix)
       return
     }
 
@@ -483,7 +541,7 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Prom
 /**
  * Handle query messages - route to specific metric calculation
  */
-async function handleQuery(waUser: WhatsAppUser, query: string): Promise<void> {
+async function handleQuery(waUser: WhatsAppUser, query: string, autoSavePrefix: string = ''): Promise<void> {
   const normalized = query.toLowerCase()
 
   // Determine metric from keywords
@@ -514,7 +572,7 @@ async function handleQuery(waUser: WhatsAppUser, query: string): Promise<void> {
   }
 
   // Route to specific query handler
-  await handleSpecificQuery(waUser, metric, timeRef)
+  await handleSpecificQuery(waUser, metric, timeRef, autoSavePrefix)
 }
 
 /**
@@ -523,7 +581,8 @@ async function handleQuery(waUser: WhatsAppUser, query: string): Promise<void> {
 async function handleSpecificQuery(
   waUser: WhatsAppUser,
   metric: 'sales' | 'expenses' | 'profit' | 'withdrawals' | 'balance' | 'debts' | 'summary',
-  timeRef: 'today' | 'yesterday' | 'this_week' | 'this_month'
+  timeRef: 'today' | 'yesterday' | 'this_week' | 'this_month',
+  autoSavePrefix: string = ''
 ): Promise<void> {
   try {
     const period = getPeriodLabel(timeRef)
@@ -623,7 +682,7 @@ async function handleSpecificQuery(
         message += `${formatNaira(cashInDrawerKobo)}\n\n`
         message += `Breakdown:\n`
         message += `Cash sales: +${formatNaira(salesKobo)}\n`
-        if (expensesKobo > 0) message += `Expenses: -${formatNaira(expensesKobo)}\n`
+        message += `Expenses: -${formatNaira(expensesKobo)}\n`
         if (withdrawalsKobo > 0) message += `Withdrawals: -${formatNaira(withdrawalsKobo)}\n`
         if (loansKobo > 0) message += `Loans given: -${formatNaira(loansKobo)}\n`
         message += `\n📌 This is physical money, not profit`
@@ -653,7 +712,7 @@ async function handleSpecificQuery(
         }
     }
 
-    await sendMessage(waUser.wa_phone, message)
+    await sendMessage(waUser.wa_phone, autoSavePrefix + message)
 
   } catch (error) {
     console.error('Error handling query:', error)
@@ -748,8 +807,15 @@ async function calculateCashInDrawer(
 
   const repaymentsKobo = (payments || []).reduce((sum, p) => sum + p.amount_kobo, 0)
 
-  // Expenses (-) [NOT YET IMPLEMENTED - default to 0]
-  const expensesKobo = 0
+  // Expenses (-)
+  const { data: expenses } = await supabase
+    .from('whatsapp_expenses')
+    .select('amount_kobo')
+    .eq('business_id', businessId)
+    .gte('expense_date', startDate)
+    .lte('expense_date', endDate)
+
+  const expensesKobo = (expenses || []).reduce((sum, e) => sum + e.amount_kobo, 0)
 
   // Owner withdrawals (-)
   const { data: withdrawals } = await supabase
