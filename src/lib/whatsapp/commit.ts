@@ -98,7 +98,19 @@ export async function commitPendingAction(
         if (!paymentResult.success) return paymentResult
         committedId = paymentResult.recordId!
         const paymentAmount = getTotalKobo(pendingAction.intent_data)
-        message = `✅ Payment recorded! ${formatNaira(paymentAmount)}`
+
+        // NEW: Use detailed allocation summary if available
+        if (paymentResult.allocationResult && pendingAction.intent_data.party) {
+          const { formatPaymentSummary } = await import('./debt-payment-allocator')
+          message = formatPaymentSummary(
+            pendingAction.intent_data.party,
+            paymentAmount,
+            paymentResult.allocationResult
+          )
+        } else {
+          // Fallback to simple message
+          message = `✅ Payment recorded! ${formatNaira(paymentAmount)}`
+        }
         break
 
       case 'withdrawal':
@@ -332,10 +344,11 @@ async function commitExpense(
 
 /**
  * Commit a debt payment
+ * FIXED: Now applies payment across ALL of customer's debts, not just the first one
  */
 async function commitDebtPayment(
   pending: PendingAction
-): Promise<{ success: boolean; recordId?: string; error?: string }> {
+): Promise<{ success: boolean; recordId?: string; error?: string; allocationResult?: any }> {
   try {
     const intent = pending.intent_data
 
@@ -351,6 +364,10 @@ async function commitDebtPayment(
         }, 0)
       : (intent.amount_kobo || 0)
 
+    if (paymentKobo <= 0) {
+      return { success: false, error: 'Payment amount must be greater than zero' }
+    }
+
     // Convert time_ref to date (using Lagos timezone)
     const getDateString = (timeRef: string | null): string => {
       const today = new Date()
@@ -365,49 +382,28 @@ async function commitDebtPayment(
       return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
     }
 
-    // Find outstanding debt for this customer
-    const { data: debts, error: debtError } = await supabase
-      .from('whatsapp_debts')
-      .select('*')
-      .eq('business_id', pending.business_id)
-      .eq('customer_name', intent.party)  // party instead of customer_name
-      .in('status', ['outstanding', 'partial'])
-      .order('sale_date', { ascending: true })
+    // NEW: Use payment allocator to apply across ALL debts
+    const { applyPaymentToCustomerDebts } = await import('./debt-payment-allocator')
 
-    if (debtError || !debts || debts.length === 0) {
-      return { success: false, error: 'No outstanding debt found for this customer' }
+    const allocationResult = await applyPaymentToCustomerDebts(
+      pending.business_id,
+      intent.party,
+      paymentKobo,
+      getDateString(intent.time_ref),
+      intent.note
+    )
+
+    if (!allocationResult.success) {
+      return { success: false, error: allocationResult.error }
     }
 
-    // Apply payment to oldest debt first
-    const debt = debts[0]
-    const paymentId = generateId()
-    const newBalance = debt.balance_kobo - paymentKobo
+    // Return success with allocation details (for receipt message)
+    return {
+      success: true,
+      recordId: allocationResult.appliedToDebts[0]?.debtId || generateId(),
+      allocationResult
+    }
 
-    // Record payment
-    await supabase
-      .from('whatsapp_debt_payments')
-      .insert({
-        id: paymentId,
-        debt_id: debt.id,
-        amount_kobo: paymentKobo,
-        payment_date: getDateString(intent.time_ref),
-        note: intent.note,
-        created_at: new Date().toISOString()
-      })
-
-    // Update debt balance
-    const newStatus = newBalance <= 0 ? 'paid' : 'partial'
-
-    await supabase
-      .from('whatsapp_debts')
-      .update({
-        balance_kobo: Math.max(0, newBalance),
-        status: newStatus,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', debt.id)
-
-    return { success: true, recordId: paymentId }
   } catch (error) {
     console.error('Error committing debt payment:', error)
     return {

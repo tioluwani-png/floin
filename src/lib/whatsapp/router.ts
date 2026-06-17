@@ -247,6 +247,11 @@ async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<
     return
   }
 
+  if (normalizedMessage === 'cleanup debts' || normalizedMessage === 'fix debts' || normalizedMessage === 'fix names') {
+    await handleCleanupDebtsCommand(waUser)
+    return
+  }
+
   // Handle greetings
   if (
     normalizedMessage === 'hi' ||
@@ -1083,6 +1088,73 @@ async function handleMarkPaidCommand(waUser: WhatsAppUser, message: string): Pro
   } catch (error) {
     console.error('Error marking paid:', error)
     await sendMessage(waUser.wa_phone, '❌ Failed to mark as paid')
+  }
+}
+
+/**
+ * Handle cleanup debts command
+ * Fixes ghost debtors (pronouns as names) and consolidates duplicates
+ */
+async function handleCleanupDebtsCommand(waUser: WhatsAppUser): Promise<void> {
+  try {
+    await sendMessage(waUser.wa_phone, '🧹 Starting debt cleanup...')
+
+    const { autoCleanupBadDebtors, consolidateDuplicateDebtors, formatBadDebtorClarificationMessage } =
+      await import('./debt-cleanup')
+
+    // Step 1: Consolidate duplicates (Clara, clara, CLARA → Clara)
+    const consolidateResult = await consolidateDuplicateDebtors(waUser.business_id!)
+
+    // Step 2: Auto-cleanup bad names (pronouns → real names where confident)
+    const cleanupResult = await autoCleanupBadDebtors(waUser.business_id!)
+
+    // Format result message
+    let message = `✅ *Cleanup complete!*\n\n`
+
+    if (consolidateResult.consolidated > 0) {
+      message += `📝 Fixed ${consolidateResult.consolidated} duplicate name${consolidateResult.consolidated === 1 ? '' : 's'}\n`
+    }
+
+    if (cleanupResult.merged > 0) {
+      message += `🔗 Merged ${cleanupResult.merged} debt${cleanupResult.merged === 1 ? '' : 's'} with bad names\n`
+    }
+
+    if (consolidateResult.consolidated === 0 && cleanupResult.merged === 0 && cleanupResult.flaggedForUser.length === 0) {
+      message += `No issues found - all debtor names are clean! 🎉\n`
+    }
+
+    await sendMessage(waUser.wa_phone, message)
+
+    // If there are debts flagged for user clarification, ask about each one
+    if (cleanupResult.flaggedForUser.length > 0) {
+      await sendMessage(
+        waUser.wa_phone,
+        `⚠️ Found ${cleanupResult.flaggedForUser.length} debt${cleanupResult.flaggedForUser.length === 1 ? '' : 's'} that need${cleanupResult.flaggedForUser.length === 1 ? 's' : ''} your help...\n\n` +
+        `I'll ask you about each one.`
+      )
+
+      // Get valid debtor names for suggestions (filter out bad names)
+      const allDebts = await getBusinessDebts(waUser.business_id!)
+      const validNames = [...new Set(allDebts.map(d => d.customer_name).filter(name => !isNonName(name)))].sort()
+
+      // Ask about first flagged debt
+      const firstFlagged = cleanupResult.flaggedForUser[0]
+      const clarificationMsg = formatBadDebtorClarificationMessage(
+        firstFlagged.name,
+        firstFlagged.balance,
+        firstFlagged.count,
+        validNames.slice(0, 5)  // Show top 5 suggestions
+      )
+
+      await sendMessage(waUser.wa_phone, clarificationMsg)
+
+      // TODO: Handle user's response to rename the debt
+      // For now, they'll need to manually fix via database or we can add a follow-up handler
+    }
+
+  } catch (error) {
+    console.error('Error cleaning up debts:', error)
+    await sendMessage(waUser.wa_phone, '❌ Failed to cleanup debts')
   }
 }
 
