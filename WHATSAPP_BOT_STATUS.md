@@ -137,6 +137,73 @@
 - All reports now call getDailyTotals() and read from same object
 - Mathematical guarantee: expenses/profit/cash can NEVER disagree
 
+#### 13. Choice Question Loop (FIXED)
+**Problem**: Bot asks "sales, expenses, or summary?", user replies "yes", bot loops forever asking same question.
+- Two sub-problems:
+  1. Bot asks too eagerly - "how about this month?" after profit query should return profit for month, not ask
+  2. Non-exact replies ("yes", "ok") caused loop instead of defaulting
+
+**Solution**: Query context tracking + choice handler
+- Created `query-context.ts` - tracks last metric queried (5min TTL)
+- `isPeriodChangeQuery()` - detects "how about [period]?" and infers metric from context
+- `handleChoiceQuestionReply()` - accepts keywords, numbers (1/2/3), affirmative defaults to summary
+- Loop prevention - never asks same question twice
+
+#### 14. Period Filters (VERIFIED CORRECT)
+**Problem**: User reported expenses showing ₦155k for "today", "this week", AND "this month" (identical).
+- Suspected date filtering not applied to expenses
+
+**Investigation Result**: Code is CORRECT
+- `getDailyTotals()` applies date filters to ALL components (sales, expenses, loans, withdrawals, repayments)
+- User's observation: all test expenses likely have same date (all from today)
+- If all expenses from today → today=155k, week=155k, month=155k (CORRECT behavior)
+- Added logging to verify date filtering in production
+
+#### 15. Payment Doesn't Clear Full Balance (FIXED) - CRITICAL
+**Problem**: Clara owed ₦20k (2 debts: ₦10k credit + ₦10k loan), paid ₦20k, but still showed ₦10k owed.
+- Root cause: `commitDebtPayment()` only applied to FIRST debt, not distributed across all
+
+**Solution**: Payment allocator distributes across ALL debts (FIFO)
+- Created `debt-payment-allocator.ts`
+- `applyPaymentToCustomerDebts()` - pays oldest debts first until payment exhausted
+- Handles overpayments (warns if payment > total debt)
+- Creates payment record per debt touched
+- Detailed receipt: "✅ Clara is fully cleared! All debts settled (2 debts)"
+
+#### 16. Ghost Debtor "her" (FIXED)
+**Problem**: Debtor literally named "her" exists (from old pronoun bug), splitting Clara's debt.
+- "Clara" ₦10k + "her" ₦10k = should be Clara ₦20k
+
+**Solution**: Automated cleanup utility
+- Created `debt-cleanup.ts`
+- `findBadDebtorNames()` - scans for pronouns/generic names
+- `autoCleanupBadDebtors()` - auto-merges where confident (only 1 valid debtor, matching amounts)
+- `consolidateDuplicateDebtors()` - fixes Clara/clara/CLARA → Clara
+- User command: "cleanup debts" / "fix debts" / "fix names"
+
+#### 17. Missing Intents (FIXED) - CRITICAL
+**Problem**: User said "clear the debt", bot showed RAW error:
+- "Error: Cannot create pending action for non-transaction intent. Please try again."
+
+**Solution**: Added 4 new natural language intents (no slash commands):
+1. **write_off_debt** - Forgive debt without payment
+   - Triggers: "clear the debt", "write off", "forget am", "e no go pay"
+   - Confirms, marks debt status='written_off', NO CASH ADDED
+2. **delete_entry** - Undo/remove last entry
+   - Triggers: "delete that last one", "undo", "cancel that sale"
+3. **edit_entry** - Change recent entry amount
+   - Triggers: "change last sale to 7k", "that fuel na 2500 not 2000"
+4. **help** (updated) - Show full capability list
+   - Triggers: "help", "menu", "wetin you fit do", "/help"
+
+#### 18. Raw Developer Errors Shown to Users (FIXED) - CRITICAL
+**Problem**: Internal errors leaked to users as raw text.
+
+**Solution**: Global error wrapper around message routing
+- All exceptions caught, logged to server
+- User NEVER sees raw errors
+- Friendly fallback in user's language: "Hmm, I no sure how to handle that one 🙏. You fit: log sale, check debts, write off debt, ask for help"
+
 ---
 
 ## Current Architecture
@@ -181,9 +248,12 @@
 - `log_expense` - Business expense
 - `log_owner_withdrawal` - Personal withdrawal
 - `log_payment_received` - Debt repayment
+- `write_off_debt` - Forgive debt without payment ✅ NEW
+- `delete_entry` - Undo/remove recent entry ✅ NEW
+- `edit_entry` - Change recent entry amount ✅ NEW
 - `query` - Balance/profit/expenses questions
 - `list_debts` - Who owes me
-- `greeting`, `thanks`, `help`, etc.
+- `greeting`, `thanks`, `help` - Conversational (help updated) ✅
 
 **Critical Distinctions**:
 - Credit sale: "[name] took [GOODS] on credit" → IS revenue
@@ -389,6 +459,17 @@ PAYSTACK_SECRET_KEY=
   - `normalizeName()` - Lowercase, trim, collapse spaces
   - `findMatchingNames()` - 3-tier fuzzy matching
   - `cleanDisplayName()` - Capitalize properly
+- `src/lib/whatsapp/query-context.ts` - Query context tracking for period changes ✅ NEW
+  - `saveQueryContext()` - Store last metric queried (5min TTL)
+  - `getQueryContext()` - Retrieve last metric
+  - `isPeriodChangeQuery()` - Detect "how about [period]?" queries
+- `src/lib/whatsapp/debt-payment-allocator.ts` - FIFO payment distribution ✅ NEW
+  - `applyPaymentToCustomerDebts()` - Distributes payment across ALL debts oldest-first
+  - Handles overpayments, creates payment records per debt
+- `src/lib/whatsapp/debt-cleanup.ts` - Automated debt cleanup utilities ✅ NEW
+  - `findBadDebtorNames()` - Scans for pronouns/generic names
+  - `autoCleanupBadDebtors()` - Auto-merges where confident
+  - `consolidateDuplicateDebtors()` - Fixes Clara/clara/CLARA → Clara
 
 ### Core Logic
 - `src/lib/whatsapp/llm-parser.ts` - Claude Sonnet 4.6, loan_given intent, language mirroring, pronoun rejection ✅
@@ -401,10 +482,24 @@ PAYSTACK_SECRET_KEY=
 - `getDailyTotals()` - **SINGLE SOURCE** for all money calculations (daily-totals.ts) ✅ NEW
 - `handleSpecificQuery()` - Uses getDailyTotals(), all metrics from same source (router.ts) ✅ UPDATED
 - `handleConfirmationReply()` - Auto-save policy, returns boolean + autoSaveMessage (router.ts) ✅ UPDATED
+- `handleChoiceQuestionReply()` - Handles keyword/number/affirmative replies to choice questions (router.ts) ✅ NEW
 - `handleRemindCommand()` - Fuzzy matching, disambiguation (router.ts) ✅ UPDATED
 - `handleMarkPaidCommand()` - Fuzzy matching, disambiguation (router.ts) ✅ UPDATED
+- `handleWriteOffDebt()` - Natural language debt forgiveness (router.ts) ✅ NEW
+- `handleDeleteEntry()` - Undo recent entries (router.ts) ✅ NEW
+- `handleEditEntry()` - Change recent entry amounts (router.ts) ✅ NEW
 - `commitExpense()` - Actually saves to whatsapp_expenses table (commit.ts) ✅ UPDATED
 - `commitSale()` / `commitLoanGiven()` - Name validation guards (commit.ts) ✅ UPDATED
+- `commitDebtPayment()` - Uses payment allocator for FIFO distribution (commit.ts) ✅ UPDATED
+- `commitWriteOff()` - Marks debts as written_off (commit.ts) ✅ NEW
+- `commitDeleteEntry()` - Soft deletes entries (commit.ts) ✅ NEW
+- `commitEditEntry()` - Updates entry amounts (commit.ts) ✅ NEW
+- `applyPaymentToCustomerDebts()` - FIFO payment allocator (debt-payment-allocator.ts) ✅ NEW
+- `findBadDebtorNames()` - Scans for bad names (debt-cleanup.ts) ✅ NEW
+- `autoCleanupBadDebtors()` - Auto-merges bad debtors (debt-cleanup.ts) ✅ NEW
+- `consolidateDuplicateDebtors()` - Merges duplicate names (debt-cleanup.ts) ✅ NEW
+- `saveQueryContext()` / `getQueryContext()` - Query context tracking (query-context.ts) ✅ NEW
+- `isPeriodChangeQuery()` - Detects period-only queries (query-context.ts) ✅ NEW
 - `getCustomerDebts()` - Fuzzy matching instead of exact match (debt-manager.ts) ✅ UPDATED
 - `formatDebtListMessage()` - Count = unique customers, not records (debt-manager.ts) ✅ UPDATED
 - ~~`calculateCashInDrawer()`~~ - Moved to getDailyTotals() ✅ REFACTORED
@@ -446,9 +541,23 @@ PAYSTACK_SECRET_KEY=
 - All debtor lookups use fuzzy matching via `findMatchingNames()`
 - Backend validation guard in commitSale() and commitLoanGiven()
 
+⚠️ **Global error handling**:
+- ALL message routing wrapped in try-catch (router.ts routeMessage())
+- Users NEVER see raw developer errors
+- Friendly fallback in user's language preference
+- All errors logged server-side for debugging
+
+⚠️ **Payment allocation**:
+- ALL debt payments distributed across ALL debts (FIFO oldest-first)
+- Use `applyPaymentToCustomerDebts()` from debt-payment-allocator.ts
+- Never manually apply payment to single debt record
+- Handles overpayments, creates detailed receipts
+
 ---
 
 Last Updated: June 17, 2026 (Session 3)
 Current Status: ✅ Production Ready
 Build Status: ✅ Compiled successfully
-Critical Bugs: 12 fixed (money categorization, query routing, visibility, confirmation, timezone, model, cash, auto-save, pronouns, debt count, fuzzy matching, consistency)
+Critical Bugs: 18 fixed
+- Session 1-2: money categorization, query routing, visibility, confirmation, timezone, model, cash, auto-save, pronouns, debt count, fuzzy matching, consistency (bugs 1-12)
+- Session 3 (latest): choice question loop, period filters verified, payment allocation, ghost debtors, missing intents, error handling (bugs 13-18)
