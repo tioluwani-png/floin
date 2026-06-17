@@ -5,12 +5,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { sendMessage, isWithinServiceWindow } from '@/lib/whatsapp/api-client'
-import {
-  calculateDailySummary,
-  formatDailySummaryMessage,
-  storeDailySummary
-} from '@/lib/whatsapp/queries'
+import { sendMessage, formatNaira, isWithinServiceWindow } from '@/lib/whatsapp/api-client'
+import { getDailyTotals, getDateRange } from '@/lib/whatsapp/daily-totals'
 
 // Server-side Supabase client
 const supabase = createClient(
@@ -86,11 +82,59 @@ export async function GET(req: NextRequest) {
           continue
         }
 
-        // Calculate today's summary
-        const summary = await calculateDailySummary(user.business_id, today)
+        // Calculate today's totals using single source of truth
+        const { start, end } = getDateRange('today')
+        const totals = await getDailyTotals(user.business_id, start, end)
 
-        // Format message
-        const message = formatDailySummaryMessage(summary)
+        // Format message with full financial picture
+        const dateObj = new Date()
+        const dayName = dateObj.toLocaleDateString('en-US', {
+          weekday: 'long',
+          timeZone: 'Africa/Lagos'
+        })
+        const dateFormatted = dateObj.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          timeZone: 'Africa/Lagos'
+        })
+
+        let message = `📊 *Daily Summary — ${dayName}, ${dateFormatted}*\n\n`
+
+        if (totals.salesKobo === 0 && totals.expensesKobo === 0) {
+          message += `No activity recorded today.\n\n`
+          message += `💡 Start logging: "Sold 3 bags 45k"`
+        } else {
+          // Show financial overview
+          message += `💰 *Sales:* ${formatNaira(totals.salesKobo)}\n`
+
+          if (totals.expensesKobo > 0) {
+            message += `📉 *Expenses:* ${formatNaira(totals.expensesKobo)}\n`
+          }
+
+          if (totals.profitKobo !== totals.salesKobo) {
+            const profitEmoji = totals.profitKobo >= 0 ? '🟢' : '🔴'
+            message += `${profitEmoji} *Profit:* ${formatNaira(totals.profitKobo)}\n`
+          }
+
+          message += `\n💵 *Cash in drawer:* ${formatNaira(totals.cashInDrawerKobo)}\n`
+
+          // Show receivables if any
+          if (totals.receivablesKobo > 0) {
+            const debtCount = totals.receivablesKobo > 0 ? '(outstanding)' : ''
+            message += `📌 *Owed to you:* ${formatNaira(totals.receivablesKobo)} ${debtCount}\n`
+          }
+
+          // Show other movements if any
+          if (totals.loansGivenKobo > 0) {
+            message += `💸 *Lent out:* ${formatNaira(totals.loansGivenKobo)}\n`
+          }
+
+          if (totals.withdrawalsKobo > 0) {
+            message += `💵 *Withdrawn:* ${formatNaira(totals.withdrawalsKobo)}\n`
+          }
+        }
+
+        message += `\n\n_Sent by FLOIN at 9pm_ 🌙`
 
         // Check service window (24 hours since last message)
         const withinWindow = user.last_message_at
@@ -117,9 +161,6 @@ export async function GET(req: NextRequest) {
           // TODO Phase 2: Send template message
           // "Your FLOIN summary for {date} is ready. Reply 'summary' to see it."
         }
-
-        // Store summary in database
-        await storeDailySummary(user.business_id, summary)
 
         // Rate limiting: small delay between sends to avoid WhatsApp throttling
         await new Promise(resolve => setTimeout(resolve, 100))
@@ -194,18 +235,59 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Calculate and send summary
-    const today = new Date().toLocaleDateString('en-CA', {
+    // Calculate and send summary using getDailyTotals
+    const { start, end } = getDateRange('today')
+    const totals = await getDailyTotals(user.business_id, start, end)
+
+    // Format message (same as main cron)
+    const dateObj = new Date()
+    const dayName = dateObj.toLocaleDateString('en-US', {
+      weekday: 'long',
+      timeZone: 'Africa/Lagos'
+    })
+    const dateFormatted = dateObj.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
       timeZone: 'Africa/Lagos'
     })
 
-    const summary = await calculateDailySummary(user.business_id, today)
-    const message = formatDailySummaryMessage(summary)
+    let message = `📊 *Daily Summary — ${dayName}, ${dateFormatted}*\n\n`
+
+    if (totals.salesKobo === 0 && totals.expensesKobo === 0) {
+      message += `No activity recorded today.\n\n`
+      message += `💡 Start logging: "Sold 3 bags 45k"`
+    } else {
+      message += `💰 *Sales:* ${formatNaira(totals.salesKobo)}\n`
+
+      if (totals.expensesKobo > 0) {
+        message += `📉 *Expenses:* ${formatNaira(totals.expensesKobo)}\n`
+      }
+
+      if (totals.profitKobo !== totals.salesKobo) {
+        const profitEmoji = totals.profitKobo >= 0 ? '🟢' : '🔴'
+        message += `${profitEmoji} *Profit:* ${formatNaira(totals.profitKobo)}\n`
+      }
+
+      message += `\n💵 *Cash in drawer:* ${formatNaira(totals.cashInDrawerKobo)}\n`
+
+      if (totals.receivablesKobo > 0) {
+        message += `📌 *Owed to you:* ${formatNaira(totals.receivablesKobo)}\n`
+      }
+
+      if (totals.loansGivenKobo > 0) {
+        message += `💸 *Lent out:* ${formatNaira(totals.loansGivenKobo)}\n`
+      }
+
+      if (totals.withdrawalsKobo > 0) {
+        message += `💵 *Withdrawn:* ${formatNaira(totals.withdrawalsKobo)}\n`
+      }
+    }
+
+    message += `\n\n_🧪 Test summary at ${new Date().toLocaleTimeString('en-US', { timeZone: 'Africa/Lagos' })}_`
 
     const result = await sendMessage(testPhone, message)
 
     if (result.success) {
-      await storeDailySummary(user.business_id, summary)
       return NextResponse.json({ success: true, message: 'Test summary sent' })
     } else {
       return NextResponse.json(
