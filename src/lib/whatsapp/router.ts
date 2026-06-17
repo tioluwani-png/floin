@@ -7,8 +7,7 @@ import { createClient } from '@supabase/supabase-js'
 import { parseMessage, ParsedIntent } from './llm-parser'
 import { createPendingAction, getActivePending, rejectPendingAction } from './confirmation'
 import { commitPendingAction } from './commit'
-import { sendMessage, formatNaira } from './api-client'
-import { transcribeVoiceNote } from './voice'
+import { sendMessage, sendButtonMessage, formatNaira } from './api-client'
 import {
   getBusinessDebts,
   getCustomerDebts,
@@ -82,23 +81,7 @@ export async function processMessage(messageId: string): Promise<void> {
 
     // Handle voice notes
     if (messageType === 'audio') {
-      await sendMessage(waPhone, '🎤 Processing your voice note...')
-
-      const transcription = await transcribeVoiceNote(
-        rawMessage.media_url,
-        rawMessage.media_mime_type
-      )
-
-      if (!transcription.success) {
-        await sendMessage(
-          waPhone,
-          `❌ Couldn't understand the audio. ${transcription.error}\n\nPlease try again or send a text message.`
-        )
-        await markMessageProcessed(messageId)
-        return
-      }
-
-      // Use transcribed text as message body
+      // Get user first for language preference
       const waUser = await getOrCreateWhatsAppUser(waPhone)
       if (!waUser) {
         console.error('Failed to get/create user')
@@ -111,7 +94,32 @@ export async function processMessage(messageId: string): Promise<void> {
         return
       }
 
-      await routeMessage(waUser, transcription.text!)
+      // Send processing message
+      await sendMessage(waPhone, '🎤 Processing your voice note...')
+
+      // Transcribe using our voice pipeline
+      const { transcribeWhatsAppVoiceNote, formatTranscriptionError } = await import('./voice-transcription')
+      const transcription = await transcribeWhatsAppVoiceNote(rawMessage.media_url)
+
+      if (!transcription.success || !transcription.text) {
+        // Send friendly error in user's language
+        const errorMsg = formatTranscriptionError(waUser.language_pref)
+        await sendMessage(waPhone, errorMsg)
+        await markMessageProcessed(messageId)
+        return
+      }
+
+      // CRITICAL: Show what was heard in confirmation
+      // This prepends "Heard: ..." to all messages so user can catch mistakes
+      const heardPrefix = `🎤 *Heard:* "${transcription.text}"\n\n`
+
+      // Store the heard prefix globally for this processing session
+      // by prepending to the transcribed text (confirmation will show it)
+      const transcribedText = transcription.text
+
+      // Route the transcribed text through normal pipeline
+      // Pass the "Heard: ..." prefix through to confirmations
+      await routeMessage(waUser, transcribedText, heardPrefix)
       await markMessageProcessed(messageId)
       return
     }
@@ -191,9 +199,9 @@ export async function processMessage(messageId: string): Promise<void> {
  * Route message based on user state and content
  * Wrapped with global error handler - NEVER show raw errors to users
  */
-async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<void> {
+async function routeMessage(waUser: WhatsAppUser, messageBody: string, voicePrefix: string = ''): Promise<void> {
   try {
-    await routeMessageUnsafe(waUser, messageBody)
+    await routeMessageUnsafe(waUser, messageBody, voicePrefix)
   } catch (error) {
     console.error('🚨 Unhandled error in message routing:', error)
     console.error('Stack:', error instanceof Error ? error.stack : 'No stack trace')
@@ -213,29 +221,29 @@ async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<
         `• Ask for help ("what can you do")\n\n` +
         `Try one of those, or type "help" to see everything I can do.`
 
-    await sendMessage(waUser.wa_phone, friendlyMessage)
+    await sendMessage(waUser.wa_phone, voicePrefix + friendlyMessage)
   }
 }
 
 /**
  * Internal routing logic (unsafe - throws errors)
  */
-async function routeMessageUnsafe(waUser: WhatsAppUser, messageBody: string): Promise<void> {
+async function routeMessageUnsafe(waUser: WhatsAppUser, messageBody: string, voicePrefix: string = ''): Promise<void> {
   const normalizedMessage = messageBody.toLowerCase().trim()
 
   // Check for pending confirmation first (exclude 'clarifying' - those need to go to parser)
   const pending = await getActivePending(waUser.wa_phone)
 
-  let autoSavePrefix = ''
+  let autoSavePrefix = voicePrefix  // Start with voice prefix if any
   if (pending && pending.action_type !== 'clarifying') {
     // Parse the message to see if it's a confirmation or a new intent
-    const { isConfirmation, autoSaveMessage } = await handleConfirmationReply(waUser, messageBody, pending)
+    const { isConfirmation, autoSaveMessage } = await handleConfirmationReply(waUser, messageBody, pending, voicePrefix)
     if (isConfirmation) {
       return  // Confirmation was handled, stop here
     }
     // If not a confirmation, fall through to process as new intent
     // (pending was auto-saved by handleConfirmationReply)
-    autoSavePrefix = autoSaveMessage || ''
+    autoSavePrefix = (autoSaveMessage || '') + voicePrefix
   }
 
   // Check for special commands
@@ -282,6 +290,94 @@ async function routeMessageUnsafe(waUser: WhatsAppUser, messageBody: string): Pr
     return
   }
 
+  // Handle edit/delete by list number: "edit 2", "delete 3"
+  const editByNumberMatch = normalizedMessage.match(/^(?:edit|change)\s+(\d+)$/i)
+  const deleteByNumberMatch = normalizedMessage.match(/^(?:delete|remove|undo)\s+(\d+)$/i)
+
+  if (editByNumberMatch || deleteByNumberMatch) {
+    const { resolveEntryByNumber, getEntryListContext } = await import('./entry-context')
+    const listNumber = parseInt(editByNumberMatch?.[1] || deleteByNumberMatch?.[1] || '0')
+    const entry = resolveEntryByNumber(waUser.wa_phone, listNumber)
+
+    if (!entry) {
+      // No context - show list first
+      const context = getEntryListContext(waUser.wa_phone)
+      if (!context) {
+        await sendMessage(
+          waUser.wa_phone,
+          `To edit or delete entries, first ask: "show me my entries"`
+        )
+      } else {
+        await sendMessage(
+          waUser.wa_phone,
+          `❌ Entry #${listNumber} not found. Choose from 1-${context.entries.length}.`
+        )
+      }
+      return
+    }
+
+    if (editByNumberMatch) {
+      // Ask for new amount
+      await sendMessage(
+        waUser.wa_phone,
+        `What's the correct amount for #${listNumber}: ${entry.description}?`
+      )
+      // Store pending edit context (will be handled in next message)
+      // For now, create a clarifying pending with edit context
+      const clarificationId = generateId()
+      await supabase
+        .from('whatsapp_pending_actions')
+        .insert({
+          id: clarificationId,
+          wa_phone: waUser.wa_phone,
+          business_id: waUser.business_id!,
+          action_type: 'clarifying',
+          intent_data: {
+            intent: 'edit_entry',
+            targetEntry: entry
+          },
+          partial_parse: {
+            intent: 'edit_entry',
+            targetEntry: entry
+          },
+          confirmation_message: `Editing #${listNumber}`,
+          status: 'pending',
+          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+        })
+      return
+    }
+
+    if (deleteByNumberMatch) {
+      // Create pending delete action with confirmation
+      const pendingId = generateId()
+      await supabase
+        .from('whatsapp_pending_actions')
+        .insert({
+          id: pendingId,
+          wa_phone: waUser.wa_phone,
+          business_id: waUser.business_id!,
+          action_type: 'delete_entry',
+          intent_data: {
+            intent: 'delete_entry',
+            targetEntry: entry
+          },
+          confirmation_message: `Delete #${listNumber}: ${entry.description} ${formatNaira(entry.amountKobo)}?`,
+          status: 'pending',
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+        })
+
+      await sendButtonMessage(
+        waUser.wa_phone,
+        `Delete #${listNumber}: ${entry.description} ${formatNaira(entry.amountKobo)}?`,
+        [
+          { id: `confirm_${pendingId}`, title: '✅ Yes, delete' },
+          { id: `cancel_${pendingId}`, title: '❌ No, keep it' }
+        ]
+      )
+      return
+    }
+  }
+
   // Handle greetings
   if (
     normalizedMessage === 'hi' ||
@@ -313,7 +409,8 @@ async function routeMessageUnsafe(waUser: WhatsAppUser, messageBody: string): Pr
 async function handleConfirmationReply(
   waUser: WhatsAppUser,
   message: string,
-  pending: any
+  pending: any,
+  voicePrefix: string = ''
 ): Promise<{ isConfirmation: boolean; autoSaveMessage?: string }> {
   // Normalize: lowercase, trim, remove emojis and punctuation except word boundaries
   const normalized = message.toLowerCase().trim().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ')
@@ -679,6 +776,12 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoS
       return
     }
 
+    // NEW: List entries (show numbered list)
+    if (intent.intent === 'list_entries') {
+      await handleListEntries(waUser, intent.time_ref || 'today', autoSavePrefix)
+      return
+    }
+
     // NEW: Write off debt (forgive without payment)
     if (intent.intent === 'write_off_debt') {
       await handleWriteOffDebt(waUser, intent, autoSavePrefix)
@@ -941,6 +1044,210 @@ async function handleDebtQuery(waUser: WhatsAppUser): Promise<void> {
     console.error('Error handling debt query:', error)
     await sendMessage(waUser.wa_phone, '❌ Failed to get debt list')
   }
+}
+
+/**
+ * Handle "show me my entries" / "list entries"
+ * Shows numbered list of all entries with easy edit/delete by number
+ */
+async function handleListEntries(
+  waUser: WhatsAppUser,
+  timeRef: string = 'today',
+  autoSavePrefix: string = ''
+): Promise<void> {
+  try {
+    const { getDateRange } = await import('./daily-totals')
+    // Cast timeRef to supported type, default to 'today' if not supported
+    const supportedTimeRef = ['today', 'yesterday', 'this_week', 'this_month'].includes(timeRef)
+      ? timeRef as 'today' | 'yesterday' | 'this_week' | 'this_month'
+      : 'today'
+    const { start: startDate, end: endDate } = getDateRange(supportedTimeRef)
+    const { saveEntryListContext } = await import('./entry-context')
+
+    // Fetch all entry types for the period
+    const [salesResult, expensesResult, loansResult, withdrawalsResult] = await Promise.all([
+      supabase
+        .from('sales_entries')
+        .select('id, date, amount, units, note, channel, created_at')
+        .eq('business_id', waUser.business_id!)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('whatsapp_expenses')
+        .select('id, expense_date, amount_kobo, note, created_at')
+        .eq('business_id', waUser.business_id!)
+        .gte('expense_date', startDate)
+        .lte('expense_date', endDate)
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('whatsapp_debts')
+        .select('id, customer_name, original_amount_kobo, created_at, is_loan')
+        .eq('business_id', waUser.business_id!)
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .eq('is_loan', true)
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('owner_withdrawals')
+        .select('id, withdrawal_date, amount_kobo, note, created_at')
+        .eq('business_id', waUser.business_id!)
+        .gte('withdrawal_date', startDate)
+        .lte('withdrawal_date', endDate)
+        .order('created_at', { ascending: true })
+    ])
+
+    // Combine all entries with metadata
+    interface EntryItem {
+      type: 'sale' | 'expense' | 'loan' | 'withdrawal'
+      id: string
+      description: string
+      amountKobo: number
+      createdAt: string
+    }
+
+    const allEntries: EntryItem[] = []
+
+    // Sales
+    salesResult.data?.forEach(sale => {
+      const desc = sale.note || `${sale.units || 1} item${sale.units > 1 ? 's' : ''}`
+      allEntries.push({
+        type: 'sale',
+        id: sale.id,
+        description: desc,
+        amountKobo: Math.round(sale.amount * 100),
+        createdAt: sale.created_at
+      })
+    })
+
+    // Expenses
+    expensesResult.data?.forEach(expense => {
+      allEntries.push({
+        type: 'expense',
+        id: expense.id,
+        description: expense.note || 'expense',
+        amountKobo: expense.amount_kobo,
+        createdAt: expense.created_at
+      })
+    })
+
+    // Loans
+    loansResult.data?.forEach(loan => {
+      allEntries.push({
+        type: 'loan',
+        id: loan.id,
+        description: `lent to ${loan.customer_name}`,
+        amountKobo: loan.original_amount_kobo,
+        createdAt: loan.created_at
+      })
+    })
+
+    // Withdrawals
+    withdrawalsResult.data?.forEach(withdrawal => {
+      allEntries.push({
+        type: 'withdrawal',
+        id: withdrawal.id,
+        description: withdrawal.note || 'personal withdrawal',
+        amountKobo: withdrawal.amount_kobo,
+        createdAt: withdrawal.created_at
+      })
+    })
+
+    // Sort by creation time (oldest first, so newest appears last)
+    allEntries.sort((a, b) =>
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    )
+
+    if (allEntries.length === 0) {
+      const timeLabel = formatTimeRefLabel(timeRef)
+      await sendMessage(
+        waUser.wa_phone,
+        `${autoSavePrefix}📋 No entries ${timeLabel}\n\n` +
+        `Start logging: "Sold 3 bags 45k"`
+      )
+      return
+    }
+
+    // Format message
+    const timeLabel = formatTimeRefLabel(timeRef)
+    const dateObj = new Date()
+    const dateStr = dateObj.toLocaleDateString('en-US', {
+      day: 'numeric',
+      month: 'short',
+      timeZone: 'Africa/Lagos'
+    })
+
+    let message = `${autoSavePrefix}📋 ${timeLabel} — ${dateStr}\n\n`
+
+    // Build entry references for context
+    const entryRefs: Array<{
+      listNumber: number
+      entryType: 'sale' | 'expense' | 'loan' | 'withdrawal'
+      entryId: string
+      description: string
+      amountKobo: number
+      date: string
+    }> = []
+
+    allEntries.forEach((entry, index) => {
+      const listNumber = index + 1
+      const time = new Date(entry.createdAt).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Africa/Lagos'
+      }).toLowerCase()
+
+      const emoji = entry.type === 'sale' ? '💰' :
+                    entry.type === 'expense' ? '📉' :
+                    entry.type === 'loan' ? '💸' : '💵'
+
+      const typeLabel = entry.type === 'sale' ? 'Sale' :
+                        entry.type === 'expense' ? 'Expense' :
+                        entry.type === 'loan' ? 'Lent out' : 'Withdrawal'
+
+      message += `${listNumber}. ${emoji} ${typeLabel} — ${entry.description} — ${formatNaira(entry.amountKobo)}  (${time})\n`
+
+      // Save ref
+      entryRefs.push({
+        listNumber,
+        entryType: entry.type,
+        entryId: entry.id,
+        description: entry.description,
+        amountKobo: entry.amountKobo,
+        date: startDate // Use start date as reference
+      })
+    })
+
+    message += `\n_Reply "edit 2" or "delete 3" to change an entry._`
+
+    // Save entry list context
+    saveEntryListContext(waUser.wa_phone, entryRefs, timeRef)
+
+    await sendMessage(waUser.wa_phone, message)
+
+  } catch (error) {
+    console.error('Error handling list entries:', error)
+    await sendMessage(waUser.wa_phone, '❌ Failed to list entries')
+  }
+}
+
+/**
+ * Format time ref for display
+ */
+function formatTimeRefLabel(timeRef: string): string {
+  const labels: Record<string, string> = {
+    'today': 'Today',
+    'yesterday': 'Yesterday',
+    'this_week': 'This Week',
+    'last_week': 'Last Week',
+    'this_month': 'This Month',
+    'last_month': 'Last Month'
+  }
+  return labels[timeRef] || 'Today'
 }
 
 /**

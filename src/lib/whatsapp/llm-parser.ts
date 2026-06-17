@@ -48,7 +48,7 @@ OUTPUT: Return ONLY a valid JSON object. No prose, no markdown, no backticks.
 
 Schema:
 {
-  "intent": "log_sale" | "log_sale_credit" | "log_expense" | "log_owner_withdrawal" | "log_loan_given" | "log_payment_received" | "log_refund" | "write_off_debt" | "delete_entry" | "edit_entry" | "correction" | "cancel" | "query" | "list_debts" | "debt_check" | "greeting" | "thanks" | "help" | "smalltalk" | "complaint" | "other",
+  "intent": "log_sale" | "log_sale_credit" | "log_expense" | "log_owner_withdrawal" | "log_loan_given" | "log_payment_received" | "log_refund" | "write_off_debt" | "delete_entry" | "edit_entry" | "list_entries" | "correction" | "cancel" | "query" | "list_debts" | "debt_check" | "greeting" | "thanks" | "help" | "smalltalk" | "complaint" | "other",
   "items": [
     {
       "kind": "sale" | "expense" | "withdrawal",
@@ -119,6 +119,10 @@ OWNER WITHDRAWAL — intent log_owner_withdrawal:
 QUERY — intent query:
 "how much", "wetin", "how far", "my profit", "my sales", "how my money", "total", "report", "show me"
 => set time_ref.
+
+LIST ENTRIES — intent list_entries:
+"show me my entries", "wetin I log today", "my transactions", "show today", "list my sales", "what did I record", "show am", "show what I entered", "my records", "view entries"
+=> set time_ref (default "today"). User wants to see numbered list of individual entries (sales, expenses, loans, withdrawals).
 
 LIST DEBTS — intent list_debts:
 "who dey owe me", "my debtors", "who never pay"
