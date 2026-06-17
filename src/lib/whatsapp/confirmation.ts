@@ -106,7 +106,7 @@ export async function createPendingAction(
       // Fallback to simple text message if buttons fail
       await sendMessage(
         waPhone,
-        confirmationMessage + '\n\nReply "Yes" to confirm or "No" to cancel.'
+        confirmationMessage + '\n\nReply *1* to save ✅  or  *2* to cancel ❌'
       )
     }
 

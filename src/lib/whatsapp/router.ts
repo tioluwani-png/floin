@@ -261,24 +261,25 @@ async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<
 
 /**
  * Handle confirmation reply (yes/no)
+ * Uses tolerant matching to accept natural Nigerian English and Pidgin confirmations
  */
 async function handleConfirmationReply(
   waUser: WhatsAppUser,
   message: string,
   pending: any
 ): Promise<void> {
-  const normalized = message.toLowerCase().trim()
+  // Normalize: lowercase, trim, remove emojis and punctuation except word boundaries
+  const normalized = message.toLowerCase().trim().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ')
+
+  // Tolerant regex patterns for confirmation (English + Pidgin)
+  const YES_PATTERN = /\b(1|yes|y|yeah|yep|yup|confirm(ed)?|ok|okay|k|correct|right|sure|save|done|na so|e correct|good)\b|✅/i
+  const NO_PATTERN = /\b(2|no|nope|cancel|delete|discard|remove|forget|wrong|no mind|e no correct)\b|❌/i
+
+  // Check original message too (for emojis that might be stripped)
+  const originalLower = message.toLowerCase()
 
   // Check for positive confirmation
-  if (
-    normalized === 'yes' ||
-    normalized === 'ok' ||
-    normalized === 'okay' ||
-    normalized === 'confirm' ||
-    normalized === '1' ||
-    normalized === 'correct' ||
-    normalized === 'yeah'
-  ) {
+  if (YES_PATTERN.test(normalized) || originalLower.includes('✅')) {
     // Commit the pending action
     const result = await commitPendingAction(pending.id)
 
@@ -292,12 +293,7 @@ async function handleConfirmationReply(
   }
 
   // Check for negative response
-  if (
-    normalized === 'no' ||
-    normalized === 'cancel' ||
-    normalized === '2' ||
-    normalized === 'wrong'
-  ) {
+  if (NO_PATTERN.test(normalized) || originalLower.includes('❌')) {
     await rejectPendingAction(pending.id)
     await sendMessage(
       waUser.wa_phone,
@@ -308,22 +304,22 @@ async function handleConfirmationReply(
 
   // Check if message looks like a new sale (not a yes/no response)
   const saleKeywords = ['sold', 'sell', 'package', 'bag', 'bottle', 'piece', 'item', 'naira', 'kobo', 'also']
-  const looksLikeSale = saleKeywords.some(keyword => normalized.includes(keyword)) || /\d/.test(message)
+  const looksLikeSale = saleKeywords.some(keyword => normalized.includes(keyword)) || /\d{3,}/.test(message)
 
   if (looksLikeSale) {
     // User is trying to log a new sale while there's a pending confirmation
     await sendMessage(
       waUser.wa_phone,
       `⚠️ You have a pending sale to confirm first!\n\n` +
-      `Reply "Yes" to save it, or "Cancel" to discard and log the new sale.`
+      `Reply *1* to save ✅  or  *2* to cancel ❌`
     )
     return
   }
 
-  // Ambiguous response - re-prompt
+  // Ambiguous response - re-prompt with clear instructions
   await sendMessage(
     waUser.wa_phone,
-    'Please reply "Yes" to confirm or "No" to cancel.'
+    'Reply *1* to save ✅  or  *2* to cancel ❌'
   )
 }
 
