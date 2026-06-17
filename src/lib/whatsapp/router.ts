@@ -19,6 +19,7 @@ import {
   markDebtAsPaid
 } from './debt-manager'
 import { validateCustomerName, isNonName } from './name-utils'
+import { getDailyTotals, getDateRange } from './daily-totals'
 
 // Server-side Supabase client
 const supabase = createClient(
@@ -595,98 +596,82 @@ async function handleSpecificQuery(
       return
     }
 
-    // Get sales data (only actual sales, NOT loans)
-    const { data: sales } = await supabase
-      .from('sales_entries')
-      .select('amount, units')
-      .eq('business_id', waUser.business_id!)
-      .gte('date', dates.start)
-      .lte('date', dates.end)
-
-    const salesNaira = (sales || []).reduce((sum, s) => sum + Number(s.amount), 0)
-    const salesKobo = Math.round(salesNaira * 100)
-
-    // Note: expenses table not implemented yet, defaulting to 0
-    const expensesKobo = 0
-
-    // Get withdrawals
-    const { data: withdrawals } = await supabase
-      .from('owner_withdrawals')
-      .select('amount_kobo')
-      .eq('business_id', waUser.business_id!)
-      .gte('withdrawal_date', dates.start)
-      .lte('withdrawal_date', dates.end)
-
-    const withdrawalsKobo = (withdrawals || []).reduce((sum, w) => sum + w.amount_kobo, 0)
-
-    // Get loans given (cash out, NOT revenue)
-    const { data: loans } = await supabase
-      .from('whatsapp_debts')
-      .select('amount_kobo, customer_name')
-      .eq('business_id', waUser.business_id!)
-      .eq('is_loan', true)
-      .gte('sale_date', dates.start)
-      .lte('sale_date', dates.end)
-
-    const loansKobo = (loans || []).reduce((sum, l) => sum + l.amount_kobo, 0)
-
-    // Get receivables (money owed to user - both credit sales and loans)
-    const receivables = await getTotalReceivables(waUser.business_id!)
-
-    // PROFIT = sales revenue - expenses ONLY
-    // NOT reduced by withdrawals or loans (those aren't business costs)
-    const profitKobo = salesKobo - expensesKobo
-
-    // CASH IN DRAWER = proper calculation of physical money
-    // + cash sales + repayments - expenses - withdrawals - loans
-    const cashInDrawerKobo = await calculateCashInDrawer(
+    // SINGLE SOURCE OF TRUTH - Get ALL figures from one unified function
+    // This ensures consistency: expenses in profit/summary/cash all come from same data
+    const totals = await getDailyTotals(
       waUser.business_id!,
       dates.start,
       dates.end
     )
 
+    // For helpful notes, get loan details if needed
+    let loanDetails: Array<{ customer_name: string }> = []
+    if (totals.loansGivenKobo > 0 && metric === 'expenses') {
+      const { data: loans } = await supabase
+        .from('whatsapp_debts')
+        .select('customer_name')
+        .eq('business_id', waUser.business_id!)
+        .eq('is_loan', true)
+        .gte('sale_date', dates.start)
+        .lte('sale_date', dates.end)
+      loanDetails = loans || []
+    }
+
+    // Get sales count for display
+    let salesCount = 0
+    if (metric === 'sales') {
+      const { data: sales } = await supabase
+        .from('sales_entries')
+        .select('id')
+        .eq('business_id', waUser.business_id!)
+        .gte('date', dates.start)
+        .lte('date', dates.end)
+      salesCount = sales?.length || 0
+    }
+
     // Format response based on requested metric
+    // ALL figures come from the same totals object (single source of truth)
     let message = ''
 
     switch (metric) {
       case 'sales':
-        message = `💰 *Sales ${period}*\n\n${formatNaira(salesKobo)}`
-        if (sales && sales.length > 0) {
-          message += `\n📋 ${sales.length} transaction${sales.length > 1 ? 's' : ''}`
+        message = `💰 *Sales ${period}*\n\n${formatNaira(totals.salesKobo)}`
+        if (salesCount > 0) {
+          message += `\n📋 ${salesCount} transaction${salesCount > 1 ? 's' : ''}`
         }
         break
 
       case 'expenses':
-        message = `📉 *Expenses ${period}*\n\n${formatNaira(expensesKobo)}`
-        if (expensesKobo === 0) {
+        message = `📉 *Expenses ${period}*\n\n${formatNaira(totals.expensesKobo)}`
+        if (totals.expensesKobo === 0) {
           message += '\n\n📌 No business expenses recorded'
         }
-        // Add helpful note if loans were given today (so user isn't confused)
-        if (loansKobo > 0 && loans && loans.length > 0) {
-          const loanNames = loans.map(l => l.customer_name).join(', ')
-          message += `\n\n💡 Note: ${formatNaira(loansKobo)} you lent to ${loanNames} is tracked in your debt book and reduces your cash, but it's not an expense (you'll get it back).`
+        // Add helpful note if loans were given (so user isn't confused)
+        if (totals.loansGivenKobo > 0 && loanDetails.length > 0) {
+          const loanNames = loanDetails.map(l => l.customer_name).join(', ')
+          message += `\n\n💡 Note: ${formatNaira(totals.loansGivenKobo)} you lent to ${loanNames} is tracked in your debt book and reduces your cash, but it's not an expense (you'll get it back).`
         }
         break
 
       case 'profit':
         message = `📊 *Profit ${period}*\n\n`
-        message += `Sales: ${formatNaira(salesKobo)}\n`
-        message += `Expenses: ${formatNaira(expensesKobo)}\n`
-        message += `\n💵 *Profit: ${formatNaira(profitKobo)}*`
+        message += `Sales: ${formatNaira(totals.salesKobo)}\n`
+        message += `Expenses: ${formatNaira(totals.expensesKobo)}\n`
+        message += `\n💵 *Profit: ${formatNaira(totals.profitKobo)}*`
         break
 
       case 'withdrawals':
-        message = `💸 *Owner Withdrawals ${period}*\n\n${formatNaira(withdrawalsKobo)}`
+        message = `💸 *Owner Withdrawals ${period}*\n\n${formatNaira(totals.withdrawalsKobo)}`
         break
 
       case 'balance':
         message = `💵 *Cash in Drawer ${period}*\n\n`
-        message += `${formatNaira(cashInDrawerKobo)}\n\n`
+        message += `${formatNaira(totals.cashInDrawerKobo)}\n\n`
         message += `Breakdown:\n`
-        message += `Cash sales: +${formatNaira(salesKobo)}\n`
-        message += `Expenses: -${formatNaira(expensesKobo)}\n`
-        if (withdrawalsKobo > 0) message += `Withdrawals: -${formatNaira(withdrawalsKobo)}\n`
-        if (loansKobo > 0) message += `Loans given: -${formatNaira(loansKobo)}\n`
+        message += `Cash sales: +${formatNaira(totals.salesKobo)}\n`
+        message += `Expenses: -${formatNaira(totals.expensesKobo)}\n`
+        if (totals.withdrawalsKobo > 0) message += `Withdrawals: -${formatNaira(totals.withdrawalsKobo)}\n`
+        if (totals.loansGivenKobo > 0) message += `Loans given: -${formatNaira(totals.loansGivenKobo)}\n`
         message += `\n📌 This is physical money, not profit`
         break
 
@@ -698,19 +683,19 @@ async function handleSpecificQuery(
           day: 'numeric'
         })
         message = `📊 *${period === 'today' ? `Today — ${todayDate}` : `Summary ${period}`}*\n\n`
-        message += `💰 Sales: ${formatNaira(salesKobo)}\n`
-        message += `📉 Expenses: ${formatNaira(expensesKobo)}\n`
-        if (loansKobo > 0) {
-          message += `💸 Lent out: ${formatNaira(loansKobo)}\n`
+        message += `💰 Sales: ${formatNaira(totals.salesKobo)}\n`
+        message += `📉 Expenses: ${formatNaira(totals.expensesKobo)}\n`
+        if (totals.loansGivenKobo > 0) {
+          message += `💸 Lent out: ${formatNaira(totals.loansGivenKobo)}\n`
         }
-        if (withdrawalsKobo > 0) {
-          message += `🏠 Withdrawals: ${formatNaira(withdrawalsKobo)}\n`
+        if (totals.withdrawalsKobo > 0) {
+          message += `🏠 Withdrawals: ${formatNaira(totals.withdrawalsKobo)}\n`
         }
-        message += `\n🟢 Profit: ${formatNaira(profitKobo)} (sales − expenses)\n`
-        message += `💵 Cash in drawer: ${formatNaira(cashInDrawerKobo)}\n`
-        message += `📌 Owed to you: ${formatNaira(receivables.total)}`
-        if (receivables.count > 0) {
-          message += ` (${receivables.count} ${receivables.count === 1 ? 'person' : 'people'})`
+        message += `\n🟢 Profit: ${formatNaira(totals.profitKobo)} (sales − expenses)\n`
+        message += `💵 Cash in drawer: ${formatNaira(totals.cashInDrawerKobo)}\n`
+        message += `📌 Owed to you: ${formatNaira(totals.receivablesKobo)}`
+        if (totals.debtorCount > 0) {
+          message += ` (${totals.debtorCount} ${totals.debtorCount === 1 ? 'person' : 'people'})`
         }
     }
 
@@ -738,127 +723,6 @@ function getPeriodLabel(timeRef: string): string {
 /**
  * Get date range for query
  */
-function getDateRange(timeRef: string): { start: string; end: string } {
-  const today = new Date()
-  const formatter = (date: Date) => date.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
-
-  switch (timeRef) {
-    case 'today':
-      return { start: formatter(today), end: formatter(today) }
-
-    case 'yesterday': {
-      const yesterday = new Date(today)
-      yesterday.setDate(yesterday.getDate() - 1)
-      return { start: formatter(yesterday), end: formatter(yesterday) }
-    }
-
-    case 'this_week': {
-      const weekStart = new Date(today)
-      weekStart.setDate(today.getDate() - today.getDay())
-      return { start: formatter(weekStart), end: formatter(today) }
-    }
-
-    case 'this_month': {
-      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-      return { start: formatter(monthStart), end: formatter(today) }
-    }
-
-    default:
-      return { start: formatter(today), end: formatter(today) }
-  }
-}
-
-/**
- * Calculate cash in drawer (real money position)
- * Formula: cash_sales + debt_repayments - expenses - withdrawals - loans_given
- * Credit sales do NOT affect cash (no money moved yet)
- */
-async function calculateCashInDrawer(
-  businessId: string,
-  startDate: string,
-  endDate: string
-): Promise<number> {
-  // Cash sales (+)
-  const { data: sales } = await supabase
-    .from('sales_entries')
-    .select('amount')
-    .eq('business_id', businessId)
-    .gte('date', startDate)
-    .lte('date', endDate)
-
-  const cashSalesKobo = (sales || []).reduce((sum, s) => sum + Number(s.amount) * 100, 0)
-
-  // Debt repayments received (+)
-  // First get debt IDs for this business
-  const { data: businessDebts } = await supabase
-    .from('whatsapp_debts')
-    .select('id')
-    .eq('business_id', businessId)
-
-  const debtIds = (businessDebts || []).map(d => d.id)
-
-  // Then get payments for those debts
-  const { data: payments } = debtIds.length > 0
-    ? await supabase
-        .from('whatsapp_debt_payments')
-        .select('amount_kobo')
-        .in('debt_id', debtIds)
-        .gte('payment_date', startDate)
-        .lte('payment_date', endDate)
-    : { data: [] }
-
-  const repaymentsKobo = (payments || []).reduce((sum, p) => sum + p.amount_kobo, 0)
-
-  // Expenses (-)
-  const { data: expenses } = await supabase
-    .from('whatsapp_expenses')
-    .select('amount_kobo')
-    .eq('business_id', businessId)
-    .gte('expense_date', startDate)
-    .lte('expense_date', endDate)
-
-  const expensesKobo = (expenses || []).reduce((sum, e) => sum + e.amount_kobo, 0)
-
-  // Owner withdrawals (-)
-  const { data: withdrawals } = await supabase
-    .from('owner_withdrawals')
-    .select('amount_kobo')
-    .eq('business_id', businessId)
-    .gte('withdrawal_date', startDate)
-    .lte('withdrawal_date', endDate)
-
-  const withdrawalsKobo = (withdrawals || []).reduce((sum, w) => sum + w.amount_kobo, 0)
-
-  // Loans given (-)
-  const { data: loans } = await supabase
-    .from('whatsapp_debts')
-    .select('amount_kobo')
-    .eq('business_id', businessId)
-    .eq('is_loan', true)
-    .gte('sale_date', startDate)
-    .lte('sale_date', endDate)
-
-  const loansKobo = (loans || []).reduce((sum, l) => sum + l.amount_kobo, 0)
-
-  // Calculate: + cash sales + repayments - expenses - withdrawals - loans
-  return cashSalesKobo + repaymentsKobo - expensesKobo - withdrawalsKobo - loansKobo
-}
-
-/**
- * Get total receivables (money owed to user)
- */
-async function getTotalReceivables(businessId: string): Promise<{ total: number; count: number }> {
-  const { data: debts } = await supabase
-    .from('whatsapp_debts')
-    .select('balance_kobo, customer_name')
-    .eq('business_id', businessId)
-    .in('status', ['outstanding', 'partial'])
-
-  const total = (debts || []).reduce((sum, d) => sum + d.balance_kobo, 0)
-  const count = debts?.length || 0
-
-  return { total, count }
-}
 
 /**
  * Handle "who owes me?" query
