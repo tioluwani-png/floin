@@ -20,6 +20,7 @@ import {
 } from './debt-manager'
 import { validateCustomerName, isNonName } from './name-utils'
 import { getDailyTotals, getDateRange } from './daily-totals'
+import { saveQueryContext, getQueryContext, isPeriodChangeQuery } from './query-context'
 
 // Server-side Supabase client
 const supabase = createClient(
@@ -385,6 +386,99 @@ async function handleConfirmationReply(
 }
 
 /**
+ * Handle choice question replies intelligently
+ * Detects replies to "sales, expenses, or summary?" type questions
+ * Accepts: keywords, numbers (1/2/3), or affirmative replies (defaults to summary)
+ * Returns parsed intent if handled, null if should fall through to LLM
+ */
+function handleChoiceQuestionReply(
+  reply: string,
+  clarificationMessage: string
+): ParsedIntent | null {
+  const normalized = reply.toLowerCase().trim()
+
+  // Check if the clarification was a metric choice question
+  const isMetricChoiceQuestion =
+    clarificationMessage.toLowerCase().includes('sales') &&
+    clarificationMessage.toLowerCase().includes('expenses') &&
+    (clarificationMessage.toLowerCase().includes('summary') ||
+     clarificationMessage.toLowerCase().includes('everything'))
+
+  if (!isMetricChoiceQuestion) {
+    return null  // Not a choice question, let LLM handle it
+  }
+
+  // Option 1: Keywords (sales, expenses, summary, etc.)
+  if (normalized.includes('sale') || normalized === '1') {
+    return {
+      intent: 'query',
+      items: [],
+      party: null,
+      amount_kobo: null,
+      query_text: 'sales today',
+      time_ref: 'today',
+      confidence: 0.95,
+      needs_clarification: false,
+      clarification_question: null,
+      note: null
+    }
+  }
+
+  if (normalized.includes('expense') || normalized.includes('spend') || normalized === '2') {
+    return {
+      intent: 'query',
+      items: [],
+      party: null,
+      amount_kobo: null,
+      query_text: 'expenses today',
+      time_ref: 'today',
+      confidence: 0.95,
+      needs_clarification: false,
+      clarification_question: null,
+      note: null
+    }
+  }
+
+  if (normalized.includes('summary') || normalized.includes('everything') ||
+      normalized.includes('all') || normalized.includes('full') ||
+      normalized.includes('together') || normalized === '3') {
+    return {
+      intent: 'query',
+      items: [],
+      party: null,
+      amount_kobo: null,
+      query_text: 'summary today',
+      time_ref: 'today',
+      confidence: 0.95,
+      needs_clarification: false,
+      clarification_question: null,
+      note: null
+    }
+  }
+
+  // Option 2: Affirmative but non-specific reply → Default to full summary
+  const affirmativePatterns = /\b(yes|yeah|yep|yup|ok|okay|sure|abeg|na so|e correct|good|right|fine)\b/i
+  if (affirmativePatterns.test(normalized)) {
+    console.log('🔄 Affirmative reply to choice question → defaulting to summary')
+    return {
+      intent: 'query',
+      items: [],
+      party: null,
+      amount_kobo: null,
+      query_text: 'summary today',
+      time_ref: 'today',
+      confidence: 0.95,
+      needs_clarification: false,
+      clarification_question: null,
+      note: null
+    }
+  }
+
+  // Unrecognized reply - return null to let LLM try
+  return null
+}
+
+/**
  * Handle sale intent (main use case)
  */
 async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoSavePrefix: string = ''): Promise<void> {
@@ -405,6 +499,22 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoS
     // If there's a clarification context, use merge mode
     if (clarificationPending && clarificationPending.partial_parse) {
       console.log('🔄 Clarification context found, using merge mode')
+
+      // First: check if this is a reply to a choice question (sales/expenses/summary)
+      const choiceReply = handleChoiceQuestionReply(
+        messageBody,
+        clarificationPending.confirmation_message || ''
+      )
+      if (choiceReply) {
+        // Handled as choice question → delete clarification and process as query
+        await supabase
+          .from('whatsapp_pending_actions')
+          .delete()
+          .eq('id', clarificationPending.id)
+
+        await handleQuery(waUser, choiceReply.query_text!, autoSavePrefix)
+        return
+      }
 
       // Shortcut: if reply is just a number, assume it's the amount
       const numberMatch = messageBody.match(/^(\d+\.?\d*)[kKmM]?$/)
@@ -467,6 +577,26 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoS
 
     // Check if clarification needed
     if (intent.needs_clarification && intent.clarification_question) {
+      // LOOP PREVENTION: Check if we just deleted a clarification with the same question
+      // If so, don't ask again - just show help instead
+      if (clarificationPending &&
+          clarificationPending.confirmation_message &&
+          clarificationPending.confirmation_message.toLowerCase().includes(
+            intent.clarification_question.toLowerCase().substring(0, 20)
+          )) {
+        console.log('🚫 Loop detected: same clarification question twice, showing help instead')
+        await sendMessage(
+          waUser.wa_phone,
+          `I'm having trouble understanding.\n\n` +
+          `Try:\n` +
+          `• "Sold 3 bags for 45k"\n` +
+          `• "I spend 10k for fuel"\n` +
+          `• "How much I make today"\n` +
+          `• "Who owes me"`
+        )
+        return
+      }
+
       // Save partial parse for context
       const clarificationId = generateId()
 
@@ -546,6 +676,19 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoS
  */
 async function handleQuery(waUser: WhatsAppUser, query: string, autoSavePrefix: string = ''): Promise<void> {
   const normalized = query.toLowerCase()
+
+  // Check if this is a period change query (e.g., "how about this month?" after asking for profit)
+  const periodChange = isPeriodChangeQuery(query)
+  if (periodChange.isPeriodChange && periodChange.timeRef) {
+    // Use previous metric from context
+    const context = getQueryContext(waUser.wa_phone)
+    if (context) {
+      // User asked "how about [period]?" - infer they want same metric for new period
+      await handleSpecificQuery(waUser, context.metric, periodChange.timeRef, autoSavePrefix)
+      return
+    }
+    // No context - fall through to normal metric detection
+  }
 
   // Determine metric from keywords
   let metric: 'sales' | 'expenses' | 'profit' | 'withdrawals' | 'balance' | 'debts' | 'summary' = 'summary'
@@ -700,6 +843,9 @@ async function handleSpecificQuery(
     }
 
     await sendMessage(waUser.wa_phone, autoSavePrefix + message)
+
+    // Save query context so "how about [period]?" can infer same metric
+    saveQueryContext(waUser.wa_phone, metric, timeRef)
 
   } catch (error) {
     console.error('Error handling query:', error)

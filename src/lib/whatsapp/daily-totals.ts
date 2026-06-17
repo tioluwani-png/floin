@@ -50,6 +50,8 @@ export async function getDailyTotals(
   endDate: string
 ): Promise<DailyTotals> {
   try {
+    console.log(`📊 getDailyTotals: ${startDate} to ${endDate} for business ${businessId}`)
+
     // 1. SALES (cash + credit) from sales_entries
     // All confirmed sales are in sales_entries table
     const { data: sales } = await supabase
@@ -60,17 +62,22 @@ export async function getDailyTotals(
       .lte('date', endDate)
 
     const salesKobo = (sales || []).reduce((sum, s) => sum + Number(s.amount) * 100, 0)
+    console.log(`  💰 Sales: ${sales?.length || 0} entries, total ${salesKobo / 100} naira`)
 
     // 2. EXPENSES from whatsapp_expenses
     // All confirmed expenses are in whatsapp_expenses table
     const { data: expenses } = await supabase
       .from('whatsapp_expenses')
-      .select('amount_kobo')
+      .select('amount_kobo, expense_date')
       .eq('business_id', businessId)
       .gte('expense_date', startDate)
       .lte('expense_date', endDate)
 
     const expensesKobo = (expenses || []).reduce((sum, e) => sum + e.amount_kobo, 0)
+    console.log(`  📉 Expenses: ${expenses?.length || 0} entries, total ${expensesKobo / 100} naira`)
+    if (expenses && expenses.length > 0) {
+      console.log(`    Expense dates:`, expenses.map(e => e.expense_date).join(', '))
+    }
 
     // 3. OWNER WITHDRAWALS from owner_withdrawals
     const { data: withdrawals } = await supabase
