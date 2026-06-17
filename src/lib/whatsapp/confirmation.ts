@@ -27,8 +27,8 @@ export interface PendingAction {
   id: string
   wa_phone: string
   business_id: string
-  action_type: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying' | 'loan_given'
-  intent_data: ParsedIntent
+  action_type: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying' | 'loan_given' | 'write_off' | 'delete_entry' | 'edit_entry'
+  intent_data: any  // Can be ParsedIntent or custom data for new action types
   partial_parse?: Partial<ParsedIntent>  // For clarification context
   confirmation_message: string
   status: 'pending' | 'confirmed' | 'rejected' | 'expired'
@@ -48,7 +48,7 @@ export async function createPendingAction(
 ): Promise<{ success: boolean; pendingId?: string; error?: string }> {
   try {
     // Determine action type from new intent types
-    let actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying' | 'loan_given'
+    let actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying' | 'loan_given' | 'write_off' | 'delete_entry' | 'edit_entry'
 
     if (intent.intent === 'log_sale' || intent.intent === 'log_sale_credit') {
       actionType = 'sale'
@@ -62,7 +62,15 @@ export async function createPendingAction(
       actionType = 'loan_given'
     } else if (intent.intent === 'correction') {
       actionType = 'correction'
+    } else if (intent.intent === 'write_off_debt') {
+      actionType = 'write_off'
+    } else if (intent.intent === 'delete_entry') {
+      actionType = 'delete_entry'
+    } else if (intent.intent === 'edit_entry') {
+      actionType = 'edit_entry'
     } else {
+      // NON-TRANSACTION INTENT - Should not create pending action
+      // Return error that will be handled gracefully by router
       return {
         success: false,
         error: 'Cannot create pending action for non-transaction intent'
@@ -233,7 +241,7 @@ export async function expirePendingActions(): Promise<number> {
  */
 function formatConfirmationMessage(
   intent: ParsedIntent,
-  actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'loan_given'
+  actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'loan_given' | 'write_off' | 'delete_entry' | 'edit_entry'
 ): string {
   // Calculate total from items
   const totalKobo = intent.items.reduce((sum, item) => {

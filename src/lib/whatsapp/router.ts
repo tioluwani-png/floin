@@ -189,8 +189,38 @@ export async function processMessage(messageId: string): Promise<void> {
 
 /**
  * Route message based on user state and content
+ * Wrapped with global error handler - NEVER show raw errors to users
  */
 async function routeMessage(waUser: WhatsAppUser, messageBody: string): Promise<void> {
+  try {
+    await routeMessageUnsafe(waUser, messageBody)
+  } catch (error) {
+    console.error('🚨 Unhandled error in message routing:', error)
+    console.error('Stack:', error instanceof Error ? error.stack : 'No stack trace')
+
+    // NEVER show raw errors to users - send friendly fallback
+    const friendlyMessage = waUser.language_pref === 'pidgin'
+      ? `Hmm, I no sure how to handle that one 🙏\n\nYou fit:\n` +
+        `• Log sale/expense (e.g. "sold 3 charger 5k")\n` +
+        `• Check who owe you ("who dey owe me")\n` +
+        `• Write off debt ("clear Clara debt")\n` +
+        `• Ask for help ("wetin you fit do")\n\n` +
+        `Try one of those, or type "help" to see everything I fit do.`
+      : `Hmm, I'm not sure how to handle that 🙏\n\nYou can:\n` +
+        `• Log a sale/expense (e.g. "sold 3 chargers 5k")\n` +
+        `• Check who owes you ("who owes me")\n` +
+        `• Write off a debt ("clear Clara's debt")\n` +
+        `• Ask for help ("what can you do")\n\n` +
+        `Try one of those, or type "help" to see everything I can do.`
+
+    await sendMessage(waUser.wa_phone, friendlyMessage)
+  }
+}
+
+/**
+ * Internal routing logic (unsafe - throws errors)
+ */
+async function routeMessageUnsafe(waUser: WhatsAppUser, messageBody: string): Promise<void> {
   const normalizedMessage = messageBody.toLowerCase().trim()
 
   // Check for pending confirmation first (exclude 'clarifying' - those need to go to parser)
@@ -624,12 +654,18 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoS
     }
 
     // Handle special intents
-    if (intent.intent === 'other' || intent.intent === 'help') {
+    if (intent.intent === 'other') {
       await sendMessage(
         waUser.wa_phone,
         `Sorry, I didn't understand that.\n\n` +
         `Try: "Sold 3 bags for 45k" or "I don sell 5000 naira"`
       )
+      return
+    }
+
+    // NEW: Help intent - show capabilities
+    if (intent.intent === 'help') {
+      await handleHelpCommand(waUser)
       return
     }
 
@@ -640,6 +676,24 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string, autoS
 
     if (intent.intent === 'query' || intent.intent === 'list_debts' || intent.intent === 'debt_check') {
       await handleQuery(waUser, intent.query_text || messageBody, autoSavePrefix)
+      return
+    }
+
+    // NEW: Write off debt (forgive without payment)
+    if (intent.intent === 'write_off_debt') {
+      await handleWriteOffDebt(waUser, intent, autoSavePrefix)
+      return
+    }
+
+    // NEW: Delete/undo entry
+    if (intent.intent === 'delete_entry') {
+      await handleDeleteEntry(waUser, intent, autoSavePrefix)
+      return
+    }
+
+    // NEW: Edit entry
+    if (intent.intent === 'edit_entry') {
+      await handleEditEntry(waUser, intent, autoSavePrefix)
       return
     }
 
@@ -1321,38 +1375,333 @@ async function handleLinkCommand(waUser: WhatsAppUser, message: string): Promise
  */
 async function handleHelpCommand(waUser: WhatsAppUser): Promise<void> {
   const helpMessage = waUser.language_pref === 'pidgin'
-    ? `📚 *FLOIN Help*\n\n` +
-      `*Log sale:*\n` +
-      `"I sell 3 bags 45k" or 🎤 voice note\n\n` +
-      `*Credit sale:*\n` +
-      `"Mama Nkechi carry 1 bag on credit 15k"\n\n` +
-      `*Owner chop money:*\n` +
-      `"I take 20k for myself"\n\n` +
-      `*Check today:*\n` +
-      `"How much I make today?"\n\n` +
-      `*Manage debts:*\n` +
-      `"Who dey owe me?" - See all debts\n` +
-      `"Mama Nkechi phone is 080..." - Save number\n` +
-      `"Remind Mama Nkechi" - Send reminder\n` +
-      `"Mark Mama Nkechi paid" - Clear debt\n\n` +
+    ? `📚 *Wetin FLOIN Fit Do*\n\n` +
+      `*📝 Log sales & expenses:*\n` +
+      `"I sell 3 bags 45k" or 🎤 voice note\n` +
+      `"I spend 10k for fuel"\n` +
+      `"I take 20k for myself" (owner chop)\n\n` +
+      `*💳 Credit & Loans:*\n` +
+      `"Mama carry 1 bag on credit 15k"\n` +
+      `"I lend Musa 5k"\n` +
+      `"Clara don pay 3k"\n\n` +
+      `*👥 Check who owe you:*\n` +
+      `"Who dey owe me?"\n` +
+      `"Remind Mama Nkechi"\n` +
+      `"Mama phone is 080..."\n\n` +
+      `*🧹 Fix/Clear entries:*\n` +
+      `"Clear Clara debt" (write off)\n` +
+      `"Delete that last one" (undo)\n` +
+      `"Change last sale to 7k" (edit)\n\n` +
+      `*📊 Check your money:*\n` +
+      `"How much I make today?"\n` +
+      `"Show me this week summary"\n` +
+      `"Wetin be my profit?"\n\n` +
       `Any question? Just ask! 😊`
-    : `📚 *FLOIN Help*\n\n` +
-      `*Log a sale:*\n` +
-      `"Sold 3 bags 45k" or 🎤 voice note\n\n` +
-      `*Credit sale:*\n` +
-      `"Mama Nkechi carry 1 bag on credit 15k"\n\n` +
-      `*Owner withdrawal:*\n` +
-      `"I took 20k for myself"\n\n` +
-      `*Check today:*\n` +
-      `"How much today?"\n\n` +
-      `*Manage debts:*\n` +
-      `"Who dey owe me?" - List all debts\n` +
-      `"Mama Nkechi phone is 080..." - Save number\n` +
-      `"Remind Mama Nkechi" - Send reminder\n` +
-      `"Mark Mama Nkechi paid" - Clear debt\n\n` +
+    : `📚 *What FLOIN Can Do*\n\n` +
+      `*📝 Log sales & expenses:*\n` +
+      `"Sold 3 bags 45k" or 🎤 voice note\n` +
+      `"Spent 10k on fuel"\n` +
+      `"Took 20k for myself" (personal)\n\n` +
+      `*💳 Credit & Loans:*\n` +
+      `"Mama bought 1 bag on credit 15k"\n` +
+      `"Lent Musa 5k"\n` +
+      `"Clara paid 3k"\n\n` +
+      `*👥 Check who owes you:*\n` +
+      `"Who owes me?"\n` +
+      `"Remind Mama Nkechi"\n` +
+      `"Mama's phone is 080..."\n\n` +
+      `*🧹 Fix/Clear entries:*\n` +
+      `"Write off Clara's debt" (forgive)\n` +
+      `"Delete that last one" (undo)\n` +
+      `"Change last sale to 7k" (edit)\n\n` +
+      `*📊 Check your money:*\n` +
+      `"How much today?"\n` +
+      `"Show this week's summary"\n` +
+      `"What's my profit?"\n\n` +
       `Questions? Just ask! 😊`
 
   await sendMessage(waUser.wa_phone, helpMessage)
+}
+
+/**
+ * Handle write off debt (forgive without payment)
+ * NEW: Supports "clear the debt", "forget am", "write off"
+ */
+async function handleWriteOffDebt(waUser: WhatsAppUser, intent: ParsedIntent, autoSavePrefix: string = ''): Promise<void> {
+  try {
+    // Get debtor name from intent
+    let debtorName = intent.party
+
+    if (!debtorName) {
+      // No name provided - list current debtors and ask
+      const allDebts = await getBusinessDebts(waUser.business_id!)
+      if (allDebts.length === 0) {
+        await sendMessage(waUser.wa_phone, autoSavePrefix + '✅ No outstanding debts to clear!')
+        return
+      }
+
+      const uniqueDebtors = [...new Set(allDebts.map(d => d.customer_name))].sort()
+      if (uniqueDebtors.length === 1) {
+        // Only one debtor - use them
+        debtorName = uniqueDebtors[0]
+      } else {
+        // Multiple debtors - ask which one
+        let msg = autoSavePrefix + `Whose debt you wan clear?\n\n`
+        uniqueDebtors.forEach(name => {
+          msg += `• ${name}\n`
+        })
+        msg += `\nReply with the name.`
+        await sendMessage(waUser.wa_phone, msg)
+        return
+      }
+    }
+
+    // Find matching customer debts using fuzzy matching
+    const { matches } = await findCustomerNameMatches(waUser.business_id!, debtorName)
+
+    if (matches.length === 0) {
+      await sendMessage(waUser.wa_phone, autoSavePrefix + `❌ No debtor found matching "${debtorName}"`)
+      return
+    }
+
+    if (matches.length > 1) {
+      let msg = autoSavePrefix + `❓ Multiple matches for "${debtorName}":\n\n`
+      matches.forEach(name => { msg += `• ${name}\n` })
+      msg += `\nBe more specific.`
+      await sendMessage(waUser.wa_phone, msg)
+      return
+    }
+
+    // Exactly one match
+    const matchedName = matches[0]
+    const debts = await getCustomerDebts(waUser.business_id!, matchedName)
+
+    if (debts.length === 0) {
+      await sendMessage(waUser.wa_phone, autoSavePrefix + `${matchedName} has no outstanding debts.`)
+      return
+    }
+
+    const totalOwed = debts.reduce((sum, d) => sum + d.balance_kobo, 0)
+
+    // Ask for confirmation
+    const confirmMsg = autoSavePrefix +
+      `⚠️ *Write off ${matchedName}'s debt?*\n\n` +
+      `Amount: ${formatNaira(totalOwed)}\n` +
+      `Debts: ${debts.length}\n\n` +
+      `This removes the debt WITHOUT payment (no cash added).\n\n` +
+      `Reply *1* to write off ✅\nReply *2* to cancel ❌`
+
+    await sendMessage(waUser.wa_phone, confirmMsg)
+
+    // Create a pending action for confirmation
+    const pendingId = generateId()
+    await supabase
+      .from('whatsapp_pending_actions')
+      .insert({
+        id: pendingId,
+        wa_phone: waUser.wa_phone,
+        business_id: waUser.business_id!,
+        action_type: 'write_off',
+        intent_data: { party: matchedName, debts: debts.map(d => d.id), amount_kobo: totalOwed },
+        confirmation_message: confirmMsg,
+        status: 'pending',
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      })
+
+  } catch (error) {
+    console.error('Error handling write off:', error)
+    await sendMessage(waUser.wa_phone, '❌ Failed to process write off')
+  }
+}
+
+/**
+ * Handle delete entry (undo last entry)
+ * NEW: Supports "delete that last one", "undo", "cancel that sale"
+ */
+async function handleDeleteEntry(waUser: WhatsAppUser, intent: ParsedIntent, autoSavePrefix: string = ''): Promise<void> {
+  try {
+    // Find most recent entry for this business
+    // Check sales_entries first (most common)
+    const { data: recentSale } = await supabase
+      .from('sales_entries')
+      .select('*')
+      .eq('business_id', waUser.business_id!)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    // Check expenses
+    const { data: recentExpense } = await supabase
+      .from('whatsapp_expenses')
+      .select('*')
+      .eq('business_id', waUser.business_id!)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    // Find which is most recent
+    let entryType: 'sale' | 'expense' | null = null
+    let entryData: any = null
+    let entryDate: Date | null = null
+
+    if (recentSale && recentExpense) {
+      const saleDate = new Date(recentSale.created_at)
+      const expenseDate = new Date(recentExpense.created_at)
+      if (saleDate > expenseDate) {
+        entryType = 'sale'
+        entryData = recentSale
+        entryDate = saleDate
+      } else {
+        entryType = 'expense'
+        entryData = recentExpense
+        entryDate = expenseDate
+      }
+    } else if (recentSale) {
+      entryType = 'sale'
+      entryData = recentSale
+      entryDate = new Date(recentSale.created_at)
+    } else if (recentExpense) {
+      entryType = 'expense'
+      entryData = recentExpense
+      entryDate = new Date(recentExpense.created_at)
+    }
+
+    if (!entryType || !entryData) {
+      await sendMessage(waUser.wa_phone, autoSavePrefix + '📝 No recent entries to delete.')
+      return
+    }
+
+    // Format description
+    const timeAgo = Math.floor((Date.now() - entryDate!.getTime()) / (1000 * 60))
+    const timeStr = timeAgo < 60 ? `${timeAgo} min${timeAgo === 1 ? '' : 's'} ago` : `${Math.floor(timeAgo / 60)} hour${Math.floor(timeAgo / 60) === 1 ? '' : 's'} ago`
+
+    let description = ''
+    if (entryType === 'sale') {
+      description = `Sale: ${formatNaira(entryData.amount * 100)}`
+      if (entryData.note) description += ` (${entryData.note})`
+    } else {
+      description = `Expense: ${formatNaira(entryData.amount_kobo)}`
+      if (entryData.note) description += ` (${entryData.note})`
+    }
+
+    const confirmMsg = autoSavePrefix +
+      `🗑️ *Delete this entry?*\n\n` +
+      `${description}\n` +
+      `Created: ${timeStr}\n\n` +
+      `Reply *1* to delete ✅\nReply *2* to cancel ❌`
+
+    await sendMessage(waUser.wa_phone, confirmMsg)
+
+    // Create pending action
+    const pendingId = generateId()
+    await supabase
+      .from('whatsapp_pending_actions')
+      .insert({
+        id: pendingId,
+        wa_phone: waUser.wa_phone,
+        business_id: waUser.business_id!,
+        action_type: 'delete_entry',
+        intent_data: { entry_type: entryType, entry_id: entryData.id },
+        confirmation_message: confirmMsg,
+        status: 'pending',
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      })
+
+  } catch (error) {
+    console.error('Error handling delete entry:', error)
+    await sendMessage(waUser.wa_phone, '❌ Failed to process delete')
+  }
+}
+
+/**
+ * Handle edit entry (change amount/description)
+ * NEW: Supports "change the last sale to 7000", "that fuel na 2500 not 2000"
+ */
+async function handleEditEntry(waUser: WhatsAppUser, intent: ParsedIntent, autoSavePrefix: string = ''): Promise<void> {
+  try {
+    // Extract new amount from intent
+    const newAmountKobo = intent.amount_kobo
+
+    if (!newAmountKobo) {
+      await sendMessage(
+        waUser.wa_phone,
+        autoSavePrefix + '❓ What\'s the new amount?\n\nExample: "change last sale to 7000"'
+      )
+      return
+    }
+
+    // Find most recent entry (similar to delete logic)
+    const { data: recentSale } = await supabase
+      .from('sales_entries')
+      .select('*')
+      .eq('business_id', waUser.business_id!)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    const { data: recentExpense } = await supabase
+      .from('whatsapp_expenses')
+      .select('*')
+      .eq('business_id', waUser.business_id!)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    let entryType: 'sale' | 'expense' | null = null
+    let entryData: any = null
+
+    if (recentSale && recentExpense) {
+      const saleDate = new Date(recentSale.created_at)
+      const expenseDate = new Date(recentExpense.created_at)
+      entryType = saleDate > expenseDate ? 'sale' : 'expense'
+      entryData = saleDate > expenseDate ? recentSale : recentExpense
+    } else if (recentSale) {
+      entryType = 'sale'
+      entryData = recentSale
+    } else if (recentExpense) {
+      entryType = 'expense'
+      entryData = recentExpense
+    }
+
+    if (!entryType || !entryData) {
+      await sendMessage(waUser.wa_phone, autoSavePrefix + '📝 No recent entries to edit.')
+      return
+    }
+
+    const oldAmount = entryType === 'sale' ? entryData.amount * 100 : entryData.amount_kobo
+    const confirmMsg = autoSavePrefix +
+      `✏️ *Edit this entry?*\n\n` +
+      `Type: ${entryType === 'sale' ? 'Sale' : 'Expense'}\n` +
+      `Old: ${formatNaira(oldAmount)}\n` +
+      `New: ${formatNaira(newAmountKobo)}\n\n` +
+      `Reply *1* to save ✅\nReply *2* to cancel ❌`
+
+    await sendMessage(waUser.wa_phone, confirmMsg)
+
+    // Create pending action
+    const pendingId = generateId()
+    await supabase
+      .from('whatsapp_pending_actions')
+      .insert({
+        id: pendingId,
+        wa_phone: waUser.wa_phone,
+        business_id: waUser.business_id!,
+        action_type: 'edit_entry',
+        intent_data: {
+          entry_type: entryType,
+          entry_id: entryData.id,
+          old_amount_kobo: oldAmount,
+          new_amount_kobo: newAmountKobo
+        },
+        confirmation_message: confirmMsg,
+        status: 'pending',
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      })
+
+  } catch (error) {
+    console.error('Error handling edit entry:', error)
+    await sendMessage(waUser.wa_phone, '❌ Failed to process edit')
+  }
 }
 
 /**

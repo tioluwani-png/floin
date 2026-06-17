@@ -48,7 +48,7 @@ OUTPUT: Return ONLY a valid JSON object. No prose, no markdown, no backticks.
 
 Schema:
 {
-  "intent": "log_sale" | "log_sale_credit" | "log_expense" | "log_owner_withdrawal" | "log_loan_given" | "log_payment_received" | "log_refund" | "correction" | "cancel" | "query" | "list_debts" | "debt_check" | "greeting" | "thanks" | "help" | "smalltalk" | "complaint" | "other",
+  "intent": "log_sale" | "log_sale_credit" | "log_expense" | "log_owner_withdrawal" | "log_loan_given" | "log_payment_received" | "log_refund" | "write_off_debt" | "delete_entry" | "edit_entry" | "correction" | "cancel" | "query" | "list_debts" | "debt_check" | "greeting" | "thanks" | "help" | "smalltalk" | "complaint" | "other",
   "items": [
     {
       "kind": "sale" | "expense" | "withdrawal",
@@ -122,6 +122,23 @@ QUERY — intent query:
 
 LIST DEBTS — intent list_debts:
 "who dey owe me", "my debtors", "who never pay"
+
+WRITE OFF DEBT — intent write_off_debt:
+"clear the debt", "clear am", "write off", "forget the debt/am", "cancel her debt", "e no go pay again", "remove the debt", "no worry just clear am"
+=> party=debtor's REAL name (not pronoun), amount_kobo=null (forgive entire balance). This removes debt WITHOUT payment (NO cash added).
+CRITICAL: Distinguish from payment. If user says "clear" or "write off" with NO amount and NO "paid", it's write_off_debt. If they say "[name] paid" or "[name] don clear" (implying payment happened), ask: "[Name] pay the money, or you dey forgive am?"
+
+DELETE ENTRY / UNDO — intent delete_entry:
+"delete that last one", "remove am", "undo", "cancel that sale", "that one na mistake", "remove the last entry"
+=> Identify most recent entry to reverse. Set note to describe which entry (e.g., "last sale", "that fuel expense").
+
+EDIT ENTRY — intent edit_entry:
+"change the last sale to 7000", "that fuel na 2500 not 2000", "edit the amount", "correct that entry"
+=> Extract: what to edit (item description/type from note) and new amount (amount_kobo). Set note to describe target + new value.
+
+HELP / MENU — intent help:
+"help", "menu", "wetin you fit do", "how this thing work", "what can you do", "/help", "/menu", "show me commands"
+=> User wants to know FLOIN's capabilities. Return help intent.
 
 Examples:
 "I sold 3 chargers for 5000" => {"intent":"log_sale","items":[{"kind":"sale","description":"charger","qty":3,"amount_kobo":500000,"amount_basis":"total"}],"party":null,"amount_kobo":null,"query_text":null,"time_ref":"today","confidence":0.97,"needs_clarification":false,"clarification_question":null,"note":null}

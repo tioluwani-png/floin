@@ -129,6 +129,27 @@ export async function commitPendingAction(
         message = `✅ Loan recorded!\n\n💸 ${formatNaira(loanAmount)} lent to ${pendingAction.intent_data.party}\n\n⚠️ This is NOT counted as a sale.`
         break
 
+      case 'write_off':
+        const writeOffResult = await commitWriteOff(pendingAction)
+        if (!writeOffResult.success) return writeOffResult
+        committedId = writeOffResult.recordId!
+        message = writeOffResult.message!
+        break
+
+      case 'delete_entry':
+        const deleteResult = await commitDeleteEntry(pendingAction)
+        if (!deleteResult.success) return deleteResult
+        committedId = deleteResult.recordId!
+        message = deleteResult.message!
+        break
+
+      case 'edit_entry':
+        const editResult = await commitEditEntry(pendingAction)
+        if (!editResult.success) return editResult
+        committedId = editResult.recordId!
+        message = editResult.message!
+        break
+
       default:
         return { success: false, error: 'Unknown action type' }
     }
@@ -607,5 +628,166 @@ async function getTodayTotal(businessId: string): Promise<number> {
   } catch (error) {
     console.error('Error calculating today total:', error)
     return 0
+  }
+}
+
+/**
+ * Commit a write-off (forgive debt without payment)
+ */
+async function commitWriteOff(
+  pending: PendingAction
+): Promise<{ success: boolean; recordId?: string; error?: string; message?: string }> {
+  try {
+    const debtIds = pending.intent_data.debts as string[]
+    const debtorName = pending.intent_data.party as string
+    const totalAmount = pending.intent_data.amount_kobo as number
+
+    if (!debtIds || debtIds.length === 0) {
+      return { success: false, error: 'No debts to write off' }
+    }
+
+    // Mark all debts as written_off
+    const { error: updateError } = await supabase
+      .from('whatsapp_debts')
+      .update({
+        balance_kobo: 0,
+        status: 'written_off',
+        updated_at: new Date().toISOString()
+      })
+      .in('id', debtIds)
+
+    if (updateError) {
+      console.error('Failed to write off debts:', updateError)
+      return { success: false, error: updateError.message }
+    }
+
+    const message = `✅ *Debt written off!*\n\n` +
+      `👤 ${debtorName}\n` +
+      `💰 Amount forgiven: ${formatNaira(totalAmount)}\n` +
+      `📝 Debts cleared: ${debtIds.length}\n\n` +
+      `⚠️ No cash was added (this is a write-off, not a payment).`
+
+    return { success: true, recordId: debtIds[0], message }
+  } catch (error) {
+    console.error('Error committing write-off:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
+}
+
+/**
+ * Commit a delete entry (soft delete/void)
+ */
+async function commitDeleteEntry(
+  pending: PendingAction
+): Promise<{ success: boolean; recordId?: string; error?: string; message?: string }> {
+  try {
+    const entryType = pending.intent_data.entry_type as 'sale' | 'expense'
+    const entryId = pending.intent_data.entry_id as string
+
+    if (entryType === 'sale') {
+      // Delete sale entry (hard delete for now - can add soft delete/voided column later)
+      const { error } = await supabase
+        .from('sales_entries')
+        .delete()
+        .eq('id', entryId)
+
+      if (error) {
+        console.error('Failed to delete sale:', error)
+        return { success: false, error: error.message }
+      }
+
+      const message = `✅ Sale deleted!\n\n` +
+        `The entry has been removed from your totals.`
+
+      return { success: true, recordId: entryId, message }
+
+    } else if (entryType === 'expense') {
+      // Delete expense entry (hard delete for now - can add soft delete/voided column later)
+      const { error } = await supabase
+        .from('whatsapp_expenses')
+        .delete()
+        .eq('id', entryId)
+
+      if (error) {
+        console.error('Failed to delete expense:', error)
+        return { success: false, error: error.message }
+      }
+
+      const message = `✅ Expense deleted!\n\n` +
+        `The entry has been removed from your totals.`
+
+      return { success: true, recordId: entryId, message }
+    }
+
+    return { success: false, error: 'Unknown entry type' }
+  } catch (error) {
+    console.error('Error committing delete:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
+}
+
+/**
+ * Commit an edit entry (update amount)
+ */
+async function commitEditEntry(
+  pending: PendingAction
+): Promise<{ success: boolean; recordId?: string; error?: string; message?: string }> {
+  try {
+    const entryType = pending.intent_data.entry_type as 'sale' | 'expense'
+    const entryId = pending.intent_data.entry_id as string
+    const oldAmountKobo = pending.intent_data.old_amount_kobo as number
+    const newAmountKobo = pending.intent_data.new_amount_kobo as number
+
+    if (entryType === 'sale') {
+      // Update sale amount (stored in naira)
+      const { error } = await supabase
+        .from('sales_entries')
+        .update({
+          amount: newAmountKobo / 100,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', entryId)
+
+      if (error) {
+        console.error('Failed to edit sale:', error)
+        return { success: false, error: error.message }
+      }
+
+    } else if (entryType === 'expense') {
+      // Update expense amount (stored in kobo)
+      const { error } = await supabase
+        .from('whatsapp_expenses')
+        .update({
+          amount_kobo: newAmountKobo,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', entryId)
+
+      if (error) {
+        console.error('Failed to edit expense:', error)
+        return { success: false, error: error.message }
+      }
+    } else {
+      return { success: false, error: 'Unknown entry type' }
+    }
+
+    const message = `✅ Entry updated!\n\n` +
+      `Type: ${entryType === 'sale' ? 'Sale' : 'Expense'}\n` +
+      `Old: ${formatNaira(oldAmountKobo)}\n` +
+      `New: ${formatNaira(newAmountKobo)}`
+
+    return { success: true, recordId: entryId, message }
+  } catch (error) {
+    console.error('Error committing edit:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
   }
 }
