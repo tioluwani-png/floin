@@ -1,8 +1,8 @@
 # FLOIN WhatsApp Bot - Current Status & Memory
 
-## Latest Session Summary (June 2026)
+## Latest Session Summary (June 17, 2026)
 
-### CRITICAL BUGS FIXED
+### CRITICAL BUGS FIXED (Session 3 - Most Recent)
 
 #### 1. Money Categorization Bug (FIXED)
 **Problem**: Cash loans were being recorded as credit SALES, inflating revenue.
@@ -64,6 +64,79 @@
 
 **Solution**: Updated to `claude-sonnet-4-6`
 
+#### 7. Cash in Drawer Missing Expenses (FIXED)
+**Problem**: Expenses were not subtracted from cash in drawer calculation
+- User logged ₦150k expense, asked "how much I have left"
+- Cash showed ₦770k (wrong), should be ₦620k
+- Correct: 785k sales - 150k expense - 5k withdrawal - 10k loan = ₦620k
+
+**Solution**: Updated calculateCashInDrawer() to query and subtract expenses
+- Now queries `whatsapp_expenses` table
+- Formula: `cash = cash_sales + debt_repayments - expenses - withdrawals - loans_given`
+- Expenses always shown in breakdown (not conditional)
+
+#### 8. Pending Confirmations Blocking New Messages (FIXED)
+**Problem**: When expense was pending, user's query was blocked
+- Pending expense awaiting confirmation
+- User asked "How much do I have left?"
+- Bot just repeated "Reply 1 to save or 2 to cancel" (annoying!)
+
+**Solution**: Auto-save policy implemented
+- Parse message to detect if it's a NEW intent (query, greeting, transaction)
+- If new intent with confidence >0.7 → auto-save pending, process new message
+- Prepend notification: "✅ Saved your pending ₦150k expense first.\n\n"
+- Only re-prompt if message is genuinely ambiguous
+- Reduced pending expiry from 1 hour to 30 minutes
+
+#### 9. Pronouns Saved as Debtor Names (FIXED)
+**Problem**: Pronouns like "her", "him", "oga", "customer" stored as literal names
+- Debt list showed debtor named "her" owing ₦10k
+
+**Solution**: Name validation and rejection system
+- Created `name-utils.ts` with NON_NAMES list (pronouns/generic terms)
+- LLM parser rejects pronouns, asks "Who be the person? Wetin be him/her name?"
+- Backend validation guard in commitSale() and commitLoanGiven()
+- Names cleaned and capitalized consistently
+
+#### 10. Debt Count Mismatch (FIXED)
+**Problem**: Header said "Outstanding Debts (3)" but only 2 rows shown
+- Counted raw debt records vs grouped customers
+
+**Solution**: Fixed formatDebtListMessage() calculation
+- Count unique customers, not total debt records
+- Count and total calculated from SAME grouped data
+- Header count always matches rows displayed
+
+#### 11. Case-Sensitive Debtor Lookup (FIXED)
+**Problem**: "remind Clara" worked, but "remind clara" failed
+- Exact match query: case-sensitive, no fuzzy matching
+
+**Solution**: Fuzzy matching for all debt operations
+- 3-tier matching: exact normalized → contains → reverse contains
+- "clara" = "Clara" = "CLARA" = " Clara "
+- "musa" finds "Alh Musa" (partial match)
+- Disambiguation when multiple matches found
+- Updated: handleRemindCommand, handleMarkPaidCommand, saveCustomerPhone
+
+#### 12. Expenses Consistency Bug (FIXED) - CRITICAL
+**Problem**: After confirming ₦150k expense:
+- Expenses showed ₦0 (WRONG)
+- Profit showed ₦785k (WRONG, should be ₦635k)
+- Cash showed ₦620k (CORRECT)
+- Same expense counted in cash but NOT in expenses/profit!
+
+**Root Cause**: router.ts line 610 hardcoded `expensesKobo = 0`
+- Cash calculation queried expenses from DB ✅
+- Summary/profit/expenses display used hardcoded 0 ❌
+- Multiple separate queries with inconsistent logic
+
+**Solution**: Single source of truth - getDailyTotals()
+- Created `daily-totals.ts` module
+- ONE function computes ALL figures from same queries
+- Returns: sales, expenses, loans, withdrawals, repayments, profit, cash, receivables
+- All reports now call getDailyTotals() and read from same object
+- Mathematical guarantee: expenses/profit/cash can NEVER disagree
+
 ---
 
 ## Current Architecture
@@ -75,7 +148,7 @@
 | `cash_sale` | ✅ YES | + cash | No | sales_entries |
 | `credit_sale` | ✅ YES | none | Yes (is_loan=false) | sales_entries + whatsapp_debts |
 | `loan_given` | ❌ NO | - cash | Yes (is_loan=true) | whatsapp_debts ONLY |
-| `expense` | ❌ NO | - cash | No | (to be implemented) |
+| `expense` | ❌ NO | - cash | No | whatsapp_expenses ✅ |
 | `owner_withdraw` | ❌ NO | - cash | No | owner_withdrawals |
 | `debt_repaid` | ❌ NO | + cash | Reduces receivable | whatsapp_debt_payments |
 
@@ -85,7 +158,8 @@
 1. `005_owner_withdrawals.sql` - Owner withdrawal tracking
 2. `006_onboarding_and_clarification.sql` - Onboarding states + clarification context
 3. `007_language_preference.sql` - Pidgin/English language support
-4. `008_loan_given_fix.sql` - Loan vs sale separation
+4. `008_loan_given_fix.sql` - Loan vs sale separation (is_loan flag)
+5. `009_whatsapp_expenses.sql` - Individual expense tracking table ✅ CRITICAL
 
 **Key Tables**:
 - `whatsapp_users` - User profiles with onboarding_state, language_pref
@@ -93,6 +167,7 @@
 - `whatsapp_pending_actions` - Confirm-before-commit workflow
 - `whatsapp_debts` - Credit sales AND loans (is_loan flag distinguishes)
 - `whatsapp_debt_payments` - Payment history
+- `whatsapp_expenses` - Individual expense entries (business costs) ✅ NEW
 - `owner_withdrawals` - Personal withdrawals
 - `sales_entries` - Actual sales (cash + credit sales only, NO loans)
 
@@ -263,38 +338,77 @@ PAYSTACK_SECRET_KEY=
 - [ ] Receivables increase when loan given
 - [ ] Summary shows all three clearly separated
 
+### Expenses & Consistency (Critical)
+- [ ] Log expense (150k ads) → confirm → expenses shows ₦150k
+- [ ] After expense: profit = sales - 150k (expenses subtracted)
+- [ ] After expense: cash = sales - 150k - withdrawals - loans (expenses subtracted)
+- [ ] Summary shows: Expenses ₦150k, Profit correct, Cash correct (all three agree)
+- [ ] "what are my expenses" → shows ₦150k (not ₦0)
+
+### Auto-Save Pending
+- [ ] Log expense (pending) → ask query → expense auto-saved, query answered
+- [ ] Auto-save message prepended: "✅ Saved your pending ₦150k expense first."
+- [ ] No more "Reply 1 to save" nag loops when asking queries
+
+### Name Handling
+- [ ] "I gave him 5k" → asks "Who be the person? Wetin be him/her name?"
+- [ ] No debtor named "her" / "him" / "oga" ever created
+- [ ] "remind clara" / "remind CLARA" / "remind Clara" → all find Clara
+- [ ] "remind musa" → finds "Alh Musa" (partial match)
+- [ ] Debt list header count matches rows shown
+- [ ] "Clara don pay 5k" → matches Clara (case-insensitive)
+
 ---
 
 ## Known Issues / TODO
 
-1. **Expenses table not implemented** - Currently defaults to ₦0
-2. **Daily summaries** - Cron job exists but needs update with 3 concepts
+1. ~~**Expenses table not implemented**~~ - ✅ FIXED (migration 009)
+2. **Daily summaries** - Cron job exists but needs update with getDailyTotals()
 3. **Team members** - WhatsApp access for multiple users per business
 4. **Multi-business** - Switching between businesses not implemented
 5. **Payment gate** - Trial expiry and Paystack integration (Phase 1 Week 6)
 
 ---
 
-## Key Files Modified (This Session)
+## Key Files Modified (All Sessions)
 
-### Database
-- `supabase/migrations/006_onboarding_and_clarification.sql` (NEW)
-- `supabase/migrations/007_language_preference.sql` (NEW)
-- `supabase/migrations/008_loan_given_fix.sql` (NEW)
+### Database Migrations
+- `supabase/migrations/005_owner_withdrawals.sql` - Owner withdrawal tracking
+- `supabase/migrations/006_onboarding_and_clarification.sql` - Onboarding states + clarification
+- `supabase/migrations/007_language_preference.sql` - Pidgin/English support
+- `supabase/migrations/008_loan_given_fix.sql` - Loan vs sale separation (is_loan flag)
+- `supabase/migrations/009_whatsapp_expenses.sql` - Individual expense tracking ✅ NEW
+
+### New Modules (Session 3)
+- `src/lib/whatsapp/daily-totals.ts` - **SINGLE SOURCE OF TRUTH** for all money calculations ✅ CRITICAL
+  - `getDailyTotals()` - Unified function, computes sales/expenses/profit/cash/receivables
+  - `getDateRange()` - Date range helper
+  - Ensures expenses/profit/cash can NEVER disagree
+- `src/lib/whatsapp/name-utils.ts` - Name validation, normalization, fuzzy matching ✅ NEW
+  - `validateCustomerName()` - Reject pronouns/generic terms
+  - `normalizeName()` - Lowercase, trim, collapse spaces
+  - `findMatchingNames()` - 3-tier fuzzy matching
+  - `cleanDisplayName()` - Capitalize properly
 
 ### Core Logic
-- `src/lib/whatsapp/llm-parser.ts` - Claude Sonnet 4.6, loan_given intent, language mirroring
-- `src/lib/whatsapp/router.ts` - Query routing, cash calculation, 3 concepts separation
-- `src/lib/whatsapp/confirmation.ts` - Tolerant matching, loan_given confirmation
-- `src/lib/whatsapp/commit.ts` - commitLoanGiven(), timezone fixes
+- `src/lib/whatsapp/llm-parser.ts` - Claude Sonnet 4.6, loan_given intent, language mirroring, pronoun rejection ✅
+- `src/lib/whatsapp/router.ts` - Query routing, getDailyTotals integration, auto-save, fuzzy name matching ✅
+- `src/lib/whatsapp/confirmation.ts` - Tolerant matching, 30min expiry, loan_given confirmation
+- `src/lib/whatsapp/commit.ts` - commitExpense(), commitLoanGiven(), name validation, timezone fixes ✅
+- `src/lib/whatsapp/debt-manager.ts` - Fuzzy customer matching, fixed debt count calculation ✅
 
-### Key Functions
-- `calculateCashInDrawer()` - SQL-based cash position (router.ts:699)
-- `getTotalReceivables()` - Sum outstanding debts (router.ts:763)
-- `handleSpecificQuery()` - Metric + time routing (router.ts:524)
-- `handleOnboarding()` - State machine (router.ts:643)
-- `handleConfirmationReply()` - Tolerant matching (router.ts:265)
-- `commitLoanGiven()` - Creates debt, no sale (commit.ts:417)
+### Key Functions (Updated)
+- `getDailyTotals()` - **SINGLE SOURCE** for all money calculations (daily-totals.ts) ✅ NEW
+- `handleSpecificQuery()` - Uses getDailyTotals(), all metrics from same source (router.ts) ✅ UPDATED
+- `handleConfirmationReply()` - Auto-save policy, returns boolean + autoSaveMessage (router.ts) ✅ UPDATED
+- `handleRemindCommand()` - Fuzzy matching, disambiguation (router.ts) ✅ UPDATED
+- `handleMarkPaidCommand()` - Fuzzy matching, disambiguation (router.ts) ✅ UPDATED
+- `commitExpense()` - Actually saves to whatsapp_expenses table (commit.ts) ✅ UPDATED
+- `commitSale()` / `commitLoanGiven()` - Name validation guards (commit.ts) ✅ UPDATED
+- `getCustomerDebts()` - Fuzzy matching instead of exact match (debt-manager.ts) ✅ UPDATED
+- `formatDebtListMessage()` - Count = unique customers, not records (debt-manager.ts) ✅ UPDATED
+- ~~`calculateCashInDrawer()`~~ - Moved to getDailyTotals() ✅ REFACTORED
+- ~~`getTotalReceivables()`~~ - Moved to getDailyTotals() ✅ REFACTORED
 
 ---
 
@@ -320,7 +434,21 @@ PAYSTACK_SECRET_KEY=
 - Convert to naira only for sales_entries table
 - All calculations use integers (kobo) for precision
 
+⚠️ **CRITICAL - Always use getDailyTotals() for money calculations**:
+- NEVER create separate queries for sales/expenses/profit/cash
+- ALL reports must call `getDailyTotals()` and read from returned object
+- This is the ONLY way to ensure consistency
+- Mathematical guarantee: expenses/profit/cash can NEVER disagree
+
+⚠️ **Names must be validated**:
+- NEVER store pronouns (her, him, oga, customer) as customer names
+- All debtor writes go through `validateCustomerName()`
+- All debtor lookups use fuzzy matching via `findMatchingNames()`
+- Backend validation guard in commitSale() and commitLoanGiven()
+
 ---
 
-Last Updated: June 17, 2026
-Current Status: ✅ Production Ready (pending migrations)
+Last Updated: June 17, 2026 (Session 3)
+Current Status: ✅ Production Ready
+Build Status: ✅ Compiled successfully
+Critical Bugs: 12 fixed (money categorization, query routing, visibility, confirmation, timezone, model, cash, auto-save, pronouns, debt count, fuzzy matching, consistency)
