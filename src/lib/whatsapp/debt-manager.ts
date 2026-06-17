@@ -5,6 +5,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { sendMessage, formatNaira } from './api-client'
+import { normalizeName, findMatchingNames, validateCustomerName } from './name-utils'
 
 // Server-side Supabase client
 const supabase = createClient(
@@ -60,24 +61,63 @@ export async function getBusinessDebts(
 }
 
 /**
- * Get debts for a specific customer
+ * Find matching customer names in the database
+ * Returns { matches: string[], exactMatch: boolean }
+ */
+export async function findCustomerNameMatches(
+  businessId: string,
+  searchName: string
+): Promise<{ matches: string[]; exactMatch: boolean }> {
+  try {
+    // Get all unique customer names with outstanding debts
+    const { data: allDebts, error } = await supabase
+      .from('whatsapp_debts')
+      .select('customer_name')
+      .eq('business_id', businessId)
+      .in('status', ['outstanding', 'partial'])
+
+    if (error) throw error
+
+    const allCustomerNames = [...new Set((allDebts || []).map(d => d.customer_name))]
+    const matchingNames = findMatchingNames(searchName, allCustomerNames)
+
+    // Check if any match is an exact normalized match
+    const normalizedSearch = normalizeName(searchName)
+    const exactMatch = matchingNames.some(name => normalizeName(name) === normalizedSearch)
+
+    return { matches: matchingNames, exactMatch }
+  } catch (error) {
+    console.error('Error finding customer name matches:', error)
+    return { matches: [], exactMatch: false }
+  }
+}
+
+/**
+ * Get debts for a specific customer (with fuzzy name matching)
  */
 export async function getCustomerDebts(
   businessId: string,
   customerName: string
 ): Promise<Debt[]> {
   try {
-    const { data, error } = await supabase
+    // First, get all debts for this business
+    const { data: allDebts, error } = await supabase
       .from('whatsapp_debts')
       .select('*')
       .eq('business_id', businessId)
-      .eq('customer_name', customerName)
       .in('status', ['outstanding', 'partial'])
       .order('sale_date', { ascending: true })
 
     if (error) throw error
 
-    return (data || []) as Debt[]
+    const debts = (allDebts || []) as Debt[]
+
+    // Extract all customer names and find matches using fuzzy matching
+    const allCustomerNames = [...new Set(debts.map(d => d.customer_name))]
+    const matchingNames = findMatchingNames(customerName, allCustomerNames)
+
+    // Filter debts to only those with matching names
+    return debts.filter(d => matchingNames.includes(d.customer_name))
   } catch (error) {
     console.error('Error fetching customer debts:', error)
     return []
@@ -140,13 +180,12 @@ export async function getOverdueDebts(businessId: string): Promise<Debt[]> {
 
 /**
  * Format detailed debt list message
+ * CRITICAL: Count and total must match what's actually shown
  */
 export function formatDebtListMessage(debts: Debt[]): string {
   if (debts.length === 0) {
     return '✅ *No outstanding debts!*\n\nAll customers have paid up. Great job! 🎉'
   }
-
-  let message = `💳 *Outstanding Debts (${debts.length})*\n\n`
 
   // Group by customer
   const debtsByCustomer: Record<string, Debt[]> = {}
@@ -157,9 +196,19 @@ export function formatDebtListMessage(debts: Debt[]): string {
     debtsByCustomer[debt.customer_name].push(debt)
   })
 
+  // Count ACTUAL customers (not total debt records)
+  const customerCount = Object.keys(debtsByCustomer).length
+
+  let message = `💳 *Outstanding Debts (${customerCount})*\n\n`
+
+  // Calculate total from grouped data (ensures consistency)
+  let calculatedTotal = 0
+
   // Format each customer's debts
   Object.entries(debtsByCustomer).forEach(([customerName, customerDebts]) => {
     const totalOwed = customerDebts.reduce((sum, d) => sum + d.balance_kobo, 0)
+    calculatedTotal += totalOwed // Add to running total
+
     const oldestDate = new Date(customerDebts[0].sale_date)
     const daysOld = Math.floor((Date.now() - oldestDate.getTime()) / (1000 * 60 * 60 * 24))
 
@@ -181,8 +230,8 @@ export function formatDebtListMessage(debts: Debt[]): string {
     message += '\n'
   })
 
-  const totalAllDebts = debts.reduce((sum, d) => sum + d.balance_kobo, 0)
-  message += `*Total owed:* ${formatNaira(totalAllDebts)}\n\n`
+  // Use calculatedTotal instead of re-summing debts array
+  message += `*Total owed:* ${formatNaira(calculatedTotal)}\n\n`
   message += `💡 _Reply "remind [name]" to send them a polite reminder_`
 
   return message
@@ -260,24 +309,44 @@ export async function sendDebtReminder(
 
 /**
  * Save customer phone number for future reminders
+ * Uses fuzzy matching to find the customer
  */
 export async function saveCustomerPhone(
   businessId: string,
   customerName: string,
   phoneNumber: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; matchedName?: string }> {
   try {
-    // Update all debts for this customer with the phone number
+    // Find matching customer names
+    const { matches } = await findCustomerNameMatches(businessId, customerName)
+
+    if (matches.length === 0) {
+      return {
+        success: false,
+        error: `No debtor found matching "${customerName}"`
+      }
+    }
+
+    if (matches.length > 1) {
+      return {
+        success: false,
+        error: `Multiple debtors match "${customerName}": ${matches.join(', ')}. Please be more specific.`
+      }
+    }
+
+    // Exactly one match - update phone for this customer
+    const matchedName = matches[0]
+
     const { error } = await supabase
       .from('whatsapp_debts')
       .update({ customer_phone: phoneNumber })
       .eq('business_id', businessId)
-      .eq('customer_name', customerName)
+      .eq('customer_name', matchedName)
       .in('status', ['outstanding', 'partial'])
 
     if (error) throw error
 
-    return { success: true }
+    return { success: true, matchedName }
   } catch (error) {
     console.error('Error saving customer phone:', error)
     return {

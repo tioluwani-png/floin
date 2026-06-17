@@ -6,6 +6,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { PendingAction } from './confirmation'
 import { sendMessage, formatNaira } from './api-client'
+import { validateCustomerName, cleanDisplayName } from './name-utils'
 
 // Server-side Supabase client
 const supabase = createClient(
@@ -228,14 +229,24 @@ async function commitSale(
 
     // If credit sale, create debt record
     if (isCredit) {
+      // Validate customer name (backend guard against pronouns/non-names)
+      const nameValidation = validateCustomerName(intent.party)
+      if (!nameValidation.valid) {
+        return {
+          success: false,
+          error: `Invalid customer name: ${nameValidation.error}`
+        }
+      }
+
       const debtId = generateId()
+      const cleanName = cleanDisplayName(intent.party!)
 
       await supabase
         .from('whatsapp_debts')
         .insert({
           id: debtId,
           business_id: pending.business_id,
-          customer_name: intent.party!,  // party instead of customer_name
+          customer_name: cleanName,  // Use cleaned display name
           amount_kobo: totalKobo,
           balance_kobo: totalKobo,
           sale_date: getDateString(intent.time_ref),
@@ -477,6 +488,15 @@ async function commitLoanGiven(
       return { success: false, error: 'Borrower name required for loan' }
     }
 
+    // Validate customer name (backend guard against pronouns/non-names)
+    const nameValidation = validateCustomerName(intent.party)
+    if (!nameValidation.valid) {
+      return {
+        success: false,
+        error: `Invalid borrower name: ${nameValidation.error}`
+      }
+    }
+
     // Calculate loan amount
     const loanKobo = intent.amount_kobo || 0
 
@@ -500,13 +520,14 @@ async function commitLoanGiven(
 
     // Create debt record with is_loan=true (to distinguish from credit sales)
     const debtId = generateId()
+    const cleanName = cleanDisplayName(intent.party)
 
     await supabase
       .from('whatsapp_debts')
       .insert({
         id: debtId,
         business_id: pending.business_id,
-        customer_name: intent.party,
+        customer_name: cleanName,  // Use cleaned display name
         amount_kobo: loanKobo,
         balance_kobo: loanKobo,
         sale_date: getDateString(intent.time_ref),

@@ -12,11 +12,13 @@ import { transcribeVoiceNote } from './voice'
 import {
   getBusinessDebts,
   getCustomerDebts,
+  findCustomerNameMatches,
   formatDebtListMessage,
   sendDebtReminder,
   saveCustomerPhone,
   markDebtAsPaid
 } from './debt-manager'
+import { validateCustomerName, isNonName } from './name-utils'
 
 // Server-side Supabase client
 const supabase = createClient(
@@ -874,21 +876,57 @@ async function handleDebtQuery(waUser: WhatsAppUser): Promise<void> {
 
 /**
  * Handle "remind [customer name]" command
+ * Uses fuzzy matching and disambiguation
  */
 async function handleRemindCommand(waUser: WhatsAppUser, message: string): Promise<void> {
   try {
-    const customerName = message.toLowerCase().replace('remind ', '').trim()
+    const searchName = message.toLowerCase().replace('remind ', '').trim()
 
-    if (!customerName) {
+    if (!searchName) {
       await sendMessage(waUser.wa_phone, '❌ Please specify customer name: "remind Mama Nkechi"')
       return
     }
 
-    // Get debts for this customer
+    // Find matching customer names
+    const { matches } = await findCustomerNameMatches(waUser.business_id!, searchName)
+
+    if (matches.length === 0) {
+      // No matches - show current debtor names for reference
+      const allDebts = await getBusinessDebts(waUser.business_id!)
+      const allNames = [...new Set(allDebts.map(d => d.customer_name))].sort()
+
+      let msg = `❌ No debtor found matching "${searchName}"`
+
+      if (allNames.length > 0) {
+        msg += `\n\nCurrent debtors:\n`
+        allNames.forEach(name => {
+          msg += `• ${name}\n`
+        })
+        msg += `\nTry: "remind ${allNames[0]}"`
+      }
+
+      await sendMessage(waUser.wa_phone, msg)
+      return
+    }
+
+    if (matches.length > 1) {
+      // Multiple matches - ask user to be more specific
+      let msg = `❓ Multiple matches found for "${searchName}":\n\n`
+      matches.forEach(name => {
+        msg += `• ${name}\n`
+      })
+      msg += `\nPlease be more specific. Example: "remind ${matches[0]}"`
+
+      await sendMessage(waUser.wa_phone, msg)
+      return
+    }
+
+    // Exactly one match - proceed with reminder
+    const customerName = matches[0]
     const debts = await getCustomerDebts(waUser.business_id!, customerName)
 
     if (debts.length === 0) {
-      await sendMessage(waUser.wa_phone, `No outstanding debts found for "${customerName}"`)
+      await sendMessage(waUser.wa_phone, `${customerName} has no outstanding debts`)
       return
     }
 
@@ -940,13 +978,14 @@ async function handleSavePhoneCommand(waUser: WhatsAppUser, message: string): Pr
     const result = await saveCustomerPhone(waUser.business_id!, customerName, formattedPhone)
 
     if (result.success) {
+      const matchedName = result.matchedName || customerName
       await sendMessage(
         waUser.wa_phone,
-        `✅ Saved ${customerName}'s number!\n\n` +
-        `You can now send reminders: "remind ${customerName}"`
+        `✅ Saved ${matchedName}'s number!\n\n` +
+        `You can now send reminders: "remind ${matchedName}"`
       )
     } else {
-      await sendMessage(waUser.wa_phone, `❌ Failed to save: ${result.error}`)
+      await sendMessage(waUser.wa_phone, `❌ ${result.error}`)
     }
 
   } catch (error) {
@@ -957,26 +996,61 @@ async function handleSavePhoneCommand(waUser: WhatsAppUser, message: string): Pr
 
 /**
  * Handle "mark [customer] paid" command
+ * Uses fuzzy matching and disambiguation
  */
 async function handleMarkPaidCommand(waUser: WhatsAppUser, message: string): Promise<void> {
   try {
     // Parse: "mark Mama Nkechi paid"
-    const customerName = message
+    const searchName = message
       .toLowerCase()
       .replace('mark ', '')
       .replace(' paid', '')
       .trim()
 
-    if (!customerName) {
+    if (!searchName) {
       await sendMessage(waUser.wa_phone, '❌ Format: "mark Mama Nkechi paid"')
       return
     }
 
-    // Get customer's debts
+    // Find matching customer names
+    const { matches } = await findCustomerNameMatches(waUser.business_id!, searchName)
+
+    if (matches.length === 0) {
+      // No matches - show current debtor names for reference
+      const allDebts = await getBusinessDebts(waUser.business_id!)
+      const allNames = [...new Set(allDebts.map(d => d.customer_name))].sort()
+
+      let msg = `❌ No debtor found matching "${searchName}"`
+
+      if (allNames.length > 0) {
+        msg += `\n\nCurrent debtors:\n`
+        allNames.forEach(name => {
+          msg += `• ${name}\n`
+        })
+      }
+
+      await sendMessage(waUser.wa_phone, msg)
+      return
+    }
+
+    if (matches.length > 1) {
+      // Multiple matches - ask user to be more specific
+      let msg = `❓ Multiple matches found for "${searchName}":\n\n`
+      matches.forEach(name => {
+        msg += `• ${name}\n`
+      })
+      msg += `\nPlease be more specific.`
+
+      await sendMessage(waUser.wa_phone, msg)
+      return
+    }
+
+    // Exactly one match - proceed with marking paid
+    const customerName = matches[0]
     const debts = await getCustomerDebts(waUser.business_id!, customerName)
 
     if (debts.length === 0) {
-      await sendMessage(waUser.wa_phone, `No outstanding debts for "${customerName}"`)
+      await sendMessage(waUser.wa_phone, `${customerName} has no outstanding debts`)
       return
     }
 

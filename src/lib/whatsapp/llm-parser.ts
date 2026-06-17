@@ -86,13 +86,22 @@ NUMBERS / SHORTHAND:
 - "1500"/"1,500"/"₦1500"/"N1500"/"1500 naira" all = 1500
 - bare numbers with no context => ASK
 
+CRITICAL — NAMES vs PRONOUNS:
+NEVER use a pronoun or generic term as a party name. These are NON-names:
+- Pronouns: her, him, them, she, he, they, you
+- Generic: oga, madam, sir, ma, mama, papa, customer, person, somebody, someone, friend, guy, man, woman, boy, girl, brother, sister, uncle, aunty, auntie
+
+If message has a REAL name → use it.
+If message has only a pronoun AND you can resolve it from immediate context (e.g. previous message mentioned "Clara", now says "remind her") → resolve pronoun to real name in party field, add note about resolution.
+If message has only pronoun/generic term and NO resolvable name → set party=null, needs_clarification=true, clarification_question="Who be the person? Wetin be him/her name?"
+
 CREDIT SALE (goods on credit - IS revenue) — intent log_sale_credit:
 "[name] took/bought/collected [GOODS] on credit", "carry goods go pay", "take am make e pay", "book [GOODS] for [name]"
-=> create item(s) AND set party to debtor's name. This IS a sale (counts as revenue).
+=> create item(s) AND set party to debtor's REAL name (not pronoun). This IS a sale (counts as revenue).
 
 LOAN GIVEN (cash loan - NOT revenue) — intent log_loan_given:
 "I gave [name] [amount]", "I lent [name]", "cash loan to [name]", "I borrow [name] money" (Nigerian usage = lending)
-=> party=name, amount_kobo. NO items (it's cash, not goods). This is NOT a sale, NOT revenue.
+=> party=REAL name (not pronoun), amount_kobo. NO items (it's cash, not goods). This is NOT a sale, NOT revenue.
 CRITICAL: If user says "gave money to a person" and it's unclear if loan or gift, ask: "You go collect am back, or na gift?"
 If loan => log_loan_given. If gift => log_owner_withdrawal.
 
