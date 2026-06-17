@@ -481,70 +481,203 @@ async function handleSaleIntent(waUser: WhatsAppUser, messageBody: string): Prom
 }
 
 /**
- * Handle query messages
+ * Handle query messages - route to specific metric calculation
  */
 async function handleQuery(waUser: WhatsAppUser, query: string): Promise<void> {
   const normalized = query.toLowerCase()
 
-  if (normalized.includes('today') || normalized.includes('dis day')) {
-    await handleTodayQuery(waUser)
-    return
+  // Determine metric from keywords
+  let metric: 'sales' | 'expenses' | 'profit' | 'withdrawals' | 'balance' | 'debts' | 'summary' = 'summary'
+
+  if (normalized.includes('expense') || normalized.includes('spend')) {
+    metric = 'expenses'
+  } else if (normalized.includes('profit') || normalized.includes('gain') || normalized.includes('make') || normalized.includes('made')) {
+    metric = 'profit'
+  } else if (normalized.includes('balance') || normalized.includes('cash') || normalized.includes('drawer') || normalized.includes('left')) {
+    metric = 'balance'
+  } else if (normalized.includes('sales') || normalized.includes('sold')) {
+    metric = 'sales'
+  } else if (normalized.includes('withdraw') || normalized.includes('took for myself') || normalized.includes('chop')) {
+    metric = 'withdrawals'
+  } else if (normalized.includes('owe') || normalized.includes('debt') || normalized.includes('owing')) {
+    metric = 'debts'
   }
 
-  if (normalized.includes('week')) {
-    await handleWeekQuery(waUser)
-    return
+  // Determine time period from keywords
+  let timeRef: 'today' | 'yesterday' | 'this_week' | 'this_month' = 'today'
+  if (normalized.includes('yesterday')) {
+    timeRef = 'yesterday'
+  } else if (normalized.includes('week')) {
+    timeRef = 'this_week'
+  } else if (normalized.includes('month')) {
+    timeRef = 'this_month'
   }
 
-  if (normalized.includes('owe') || normalized.includes('debt') || normalized.includes('credit')) {
-    await handleDebtQuery(waUser)
-    return
-  }
-
-  // Default: show help
-  await handleHelpCommand(waUser)
+  // Route to specific query handler
+  await handleSpecificQuery(waUser, metric, timeRef)
 }
 
 /**
- * Handle "how much today?" query
+ * Handle specific query based on metric and time period
  */
-async function handleTodayQuery(waUser: WhatsAppUser): Promise<void> {
+async function handleSpecificQuery(
+  waUser: WhatsAppUser,
+  metric: 'sales' | 'expenses' | 'profit' | 'withdrawals' | 'balance' | 'debts' | 'summary',
+  timeRef: 'today' | 'yesterday' | 'this_week' | 'this_month'
+): Promise<void> {
   try {
-    const today = new Date().toLocaleDateString('en-CA', {
-      timeZone: 'Africa/Lagos'
-    })
+    const period = getPeriodLabel(timeRef)
+    const dates = getDateRange(timeRef)
 
-    const { data: sales, error } = await supabase
+    if (metric === 'debts') {
+      await handleDebtQuery(waUser)
+      return
+    }
+
+    // Get sales data (only actual sales, NOT loans)
+    const { data: sales } = await supabase
       .from('sales_entries')
       .select('amount, units')
       .eq('business_id', waUser.business_id!)
-      .eq('date', today)
+      .gte('date', dates.start)
+      .lte('date', dates.end)
 
-    if (error) throw error
+    const salesNaira = (sales || []).reduce((sum, s) => sum + Number(s.amount), 0)
+    const salesKobo = Math.round(salesNaira * 100)
 
-    const totalNaira = (sales || []).reduce((sum, s) => sum + Number(s.amount), 0)
-    const totalUnits = (sales || []).reduce((sum, s) => sum + s.units, 0)
-    const count = sales?.length || 0
+    // Note: expenses table not implemented yet, defaulting to 0
+    const expensesKobo = 0
 
-    const message = `📊 *Today's Summary*\n\n` +
-      `💰 Total sales: ${formatNaira(Math.round(totalNaira * 100))}\n` +
-      `📦 Units sold: ${totalUnits}\n` +
-      `📋 Transactions: ${count}`
+    // Get withdrawals
+    const { data: withdrawals } = await supabase
+      .from('owner_withdrawals')
+      .select('amount_kobo')
+      .eq('business_id', waUser.business_id!)
+      .gte('withdrawal_date', dates.start)
+      .lte('withdrawal_date', dates.end)
+
+    const withdrawalsKobo = (withdrawals || []).reduce((sum, w) => sum + w.amount_kobo, 0)
+
+    // Get loans given (cash out, NOT revenue)
+    const { data: loans } = await supabase
+      .from('whatsapp_debts')
+      .select('amount_kobo')
+      .eq('business_id', waUser.business_id!)
+      .eq('is_loan', true)
+      .gte('sale_date', dates.start)
+      .lte('sale_date', dates.end)
+
+    const loansKobo = (loans || []).reduce((sum, l) => sum + l.amount_kobo, 0)
+
+    // Calculate profit (sales revenue - expenses)
+    const profitKobo = salesKobo - expensesKobo
+
+    // Calculate cash balance (what's in drawer)
+    // = sales - expenses - withdrawals - loans given
+    const balanceKobo = salesKobo - expensesKobo - withdrawalsKobo - loansKobo
+
+    // Format response based on requested metric
+    let message = ''
+
+    switch (metric) {
+      case 'sales':
+        message = `💰 *Sales ${period}*\n\n${formatNaira(salesKobo)}`
+        if (sales && sales.length > 0) {
+          message += `\n📋 ${sales.length} transaction${sales.length > 1 ? 's' : ''}`
+        }
+        break
+
+      case 'expenses':
+        message = `📉 *Expenses ${period}*\n\n${formatNaira(expensesKobo)}`
+        if (expensesKobo === 0) {
+          message += '\n\n📌 No expenses recorded'
+        }
+        break
+
+      case 'profit':
+        message = `📊 *Profit ${period}*\n\n`
+        message += `Sales: ${formatNaira(salesKobo)}\n`
+        message += `Expenses: ${formatNaira(expensesKobo)}\n`
+        message += `\n💵 *Profit: ${formatNaira(profitKobo)}*`
+        break
+
+      case 'withdrawals':
+        message = `💸 *Owner Withdrawals ${period}*\n\n${formatNaira(withdrawalsKobo)}`
+        break
+
+      case 'balance':
+        message = `💰 *Cash Balance ${period}*\n\n`
+        message += `${formatNaira(balanceKobo)}\n\n`
+        message += `Sales: +${formatNaira(salesKobo)}\n`
+        message += `Expenses: -${formatNaira(expensesKobo)}\n`
+        message += `Withdrawals: -${formatNaira(withdrawalsKobo)}\n`
+        message += `Loans given: -${formatNaira(loansKobo)}`
+        break
+
+      case 'summary':
+      default:
+        message = `📊 *Summary ${period}*\n\n`
+        message += `💰 Sales: ${formatNaira(salesKobo)}\n`
+        message += `📉 Expenses: ${formatNaira(expensesKobo)}\n`
+        message += `💵 Profit: ${formatNaira(profitKobo)}\n`
+        message += `💸 Withdrawals: ${formatNaira(withdrawalsKobo)}\n`
+        if (loansKobo > 0) {
+          message += `🤝 Loans given: ${formatNaira(loansKobo)}\n`
+        }
+    }
 
     await sendMessage(waUser.wa_phone, message)
 
   } catch (error) {
-    console.error('Error handling today query:', error)
-    await sendMessage(waUser.wa_phone, '❌ Failed to get today\'s summary')
+    console.error('Error handling query:', error)
+    await sendMessage(waUser.wa_phone, '❌ Failed to get data')
   }
 }
 
 /**
- * Handle "this week" query
+ * Get period label for display
  */
-async function handleWeekQuery(waUser: WhatsAppUser): Promise<void> {
-  // TODO: Implement week query
-  await sendMessage(waUser.wa_phone, '📊 Weekly summary coming soon!')
+function getPeriodLabel(timeRef: string): string {
+  switch (timeRef) {
+    case 'today': return 'today'
+    case 'yesterday': return 'yesterday'
+    case 'this_week': return 'this week'
+    case 'this_month': return 'this month'
+    default: return timeRef
+  }
+}
+
+/**
+ * Get date range for query
+ */
+function getDateRange(timeRef: string): { start: string; end: string } {
+  const today = new Date()
+  const formatter = (date: Date) => date.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+
+  switch (timeRef) {
+    case 'today':
+      return { start: formatter(today), end: formatter(today) }
+
+    case 'yesterday': {
+      const yesterday = new Date(today)
+      yesterday.setDate(yesterday.getDate() - 1)
+      return { start: formatter(yesterday), end: formatter(yesterday) }
+    }
+
+    case 'this_week': {
+      const weekStart = new Date(today)
+      weekStart.setDate(today.getDate() - today.getDay())
+      return { start: formatter(weekStart), end: formatter(today) }
+    }
+
+    case 'this_month': {
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
+      return { start: formatter(monthStart), end: formatter(today) }
+    }
+
+    default:
+      return { start: formatter(today), end: formatter(today) }
+  }
 }
 
 /**

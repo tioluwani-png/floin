@@ -108,6 +108,14 @@ export async function commitPendingAction(
         message = `✅ Withdrawal recorded! ${formatNaira(withdrawalAmount)}\n\nThis is tracked separately from business expenses.`
         break
 
+      case 'loan_given':
+        const loanResult = await commitLoanGiven(pendingAction)
+        if (!loanResult.success) return loanResult
+        committedId = loanResult.recordId!
+        const loanAmount = getTotalKobo(pendingAction.intent_data)
+        message = `✅ Loan recorded!\n\n💸 ${formatNaira(loanAmount)} lent to ${pendingAction.intent_data.party}\n\n⚠️ This is NOT counted as a sale.`
+        break
+
       default:
         return { success: false, error: 'Unknown action type' }
     }
@@ -399,6 +407,72 @@ async function commitWithdrawal(
     return { success: true, recordId: withdrawalId }
   } catch (error) {
     console.error('Error committing withdrawal:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
+}
+
+/**
+ * Commit a loan given (cash lent out - NOT a sale, NOT revenue)
+ */
+async function commitLoanGiven(
+  pending: PendingAction
+): Promise<{ success: boolean; recordId?: string; error?: string }> {
+  try {
+    const intent = pending.intent_data
+
+    if (!intent.party) {
+      return { success: false, error: 'Borrower name required for loan' }
+    }
+
+    // Calculate loan amount
+    const loanKobo = intent.amount_kobo || 0
+
+    if (loanKobo <= 0) {
+      return { success: false, error: 'Loan amount required' }
+    }
+
+    // Convert time_ref to date (using Lagos timezone)
+    const getDateString = (timeRef: string | null): string => {
+      const today = new Date()
+      if (!timeRef || timeRef === 'today') {
+        return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+      }
+      if (timeRef === 'yesterday') {
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+        return yesterday.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+      }
+      return today.toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+    }
+
+    // Create debt record with is_loan=true (to distinguish from credit sales)
+    const debtId = generateId()
+
+    await supabase
+      .from('whatsapp_debts')
+      .insert({
+        id: debtId,
+        business_id: pending.business_id,
+        customer_name: intent.party,
+        amount_kobo: loanKobo,
+        balance_kobo: loanKobo,
+        sale_date: getDateString(intent.time_ref),
+        note: intent.note || 'Cash loan',
+        status: 'outstanding',
+        is_loan: true,  // CRITICAL: marks as loan, NOT credit sale
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+
+    // NOTE: Do NOT create a sales_entries row - loans are NOT sales!
+    // This is the key difference from credit sales.
+
+    return { success: true, recordId: debtId }
+  } catch (error) {
+    console.error('Error committing loan:', error)
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error'

@@ -27,7 +27,7 @@ export interface PendingAction {
   id: string
   wa_phone: string
   business_id: string
-  action_type: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying'
+  action_type: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying' | 'loan_given'
   intent_data: ParsedIntent
   partial_parse?: Partial<ParsedIntent>  // For clarification context
   confirmation_message: string
@@ -48,7 +48,7 @@ export async function createPendingAction(
 ): Promise<{ success: boolean; pendingId?: string; error?: string }> {
   try {
     // Determine action type from new intent types
-    let actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying'
+    let actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'clarifying' | 'loan_given'
 
     if (intent.intent === 'log_sale' || intent.intent === 'log_sale_credit') {
       actionType = 'sale'
@@ -58,6 +58,8 @@ export async function createPendingAction(
       actionType = 'debt_payment'
     } else if (intent.intent === 'log_owner_withdrawal') {
       actionType = 'withdrawal'
+    } else if (intent.intent === 'log_loan_given') {
+      actionType = 'loan_given'
     } else if (intent.intent === 'correction') {
       actionType = 'correction'
     } else {
@@ -231,7 +233,7 @@ export async function expirePendingActions(): Promise<number> {
  */
 function formatConfirmationMessage(
   intent: ParsedIntent,
-  actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction'
+  actionType: 'sale' | 'expense' | 'debt_payment' | 'withdrawal' | 'correction' | 'loan_given'
 ): string {
   // Calculate total from items
   const totalKobo = intent.items.reduce((sum, item) => {
@@ -308,6 +310,18 @@ function formatConfirmationMessage(
     message += `📅 Date: ${date}\n`
     message += `📌 Note: Personal withdrawal (not business expense)\n\n`
     message += `This will be tracked separately from business expenses.`
+
+    return message
+  }
+
+  if (actionType === 'loan_given') {
+    let message = '📝 *Confirm loan given?*\n\n'
+    message += `💸 *Money lent out*\n`
+    message += `To: ${intent.party || 'Unknown'}\n`
+    message += `Amount: ${amount}\n`
+    message += `📅 Date: ${date}\n\n`
+    message += `⚠️ ${intent.party || 'This person'} owes you ${amount}\n`
+    message += `📌 This is NOT a sale (not counted as revenue)`
 
     return message
   }

@@ -48,7 +48,7 @@ OUTPUT: Return ONLY a valid JSON object. No prose, no markdown, no backticks.
 
 Schema:
 {
-  "intent": "log_sale" | "log_sale_credit" | "log_expense" | "log_owner_withdrawal" | "log_payment_received" | "log_refund" | "correction" | "cancel" | "query" | "list_debts" | "debt_check" | "greeting" | "thanks" | "help" | "smalltalk" | "complaint" | "other",
+  "intent": "log_sale" | "log_sale_credit" | "log_expense" | "log_owner_withdrawal" | "log_loan_given" | "log_payment_received" | "log_refund" | "correction" | "cancel" | "query" | "list_debts" | "debt_check" | "greeting" | "thanks" | "help" | "smalltalk" | "complaint" | "other",
   "items": [
     {
       "kind": "sale" | "expense" | "withdrawal",
@@ -86,9 +86,15 @@ NUMBERS / SHORTHAND:
 - "1500"/"1,500"/"₦1500"/"N1500"/"1500 naira" all = 1500
 - bare numbers with no context => ASK
 
-CREDIT (money owed TO user) — intent log_sale_credit:
-"on credit", "credit", "carry ... go pay", "collect ... later", "take am make e pay", "I borrow am", "e never pay", "owing", "IOU", "book am for [name]", "[name] go pay"
-=> create item(s) AND set party to debtor's name.
+CREDIT SALE (goods on credit - IS revenue) — intent log_sale_credit:
+"[name] took/bought/collected [GOODS] on credit", "carry goods go pay", "take am make e pay", "book [GOODS] for [name]"
+=> create item(s) AND set party to debtor's name. This IS a sale (counts as revenue).
+
+LOAN GIVEN (cash loan - NOT revenue) — intent log_loan_given:
+"I gave [name] [amount]", "I lent [name]", "cash loan to [name]", "I borrow [name] money" (Nigerian usage = lending)
+=> party=name, amount_kobo. NO items (it's cash, not goods). This is NOT a sale, NOT revenue.
+CRITICAL: If user says "gave money to a person" and it's unclear if loan or gift, ask: "You go collect am back, or na gift?"
+If loan => log_loan_given. If gift => log_owner_withdrawal.
 
 PAYMENT RECEIVED — intent log_payment_received:
 "[name] don pay", "[name] pay him debt", "[name] bring the money", "[name] clear", "settle", "balance"
